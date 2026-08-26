@@ -32,6 +32,9 @@ export const STATE = {
     manageTab: 'worldbook',
     manageExpandedGroups: new Set(),
 
+    // 编辑器视图：是否只显示当前已启用的条目
+    showOnlyEnabled: false,
+
     boundBooksSet: {},
 
     bindings: {

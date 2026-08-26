@@ -235,6 +235,9 @@ div#wb-active-dropdown input.wb-gr-search-input:focus {
 /* 需求6: 悬停改为纯黑色背景 */
 #enhanced-wb-panel-v6 .wb-btn-circle:hover { background: #000000; color: #ffffff; border-color: #000000; }
 
+/* 筛选按钮：只看已启用条目 - 激活态 */
+#enhanced-wb-panel-v6 .wb-btn-circle#btn-filter-enabled.active { background: #7c5cbd; color: #ffffff; border-color: #7c5cbd; }
+
 /* 需求2: 编辑/删除按钮样式 */
 #enhanced-wb-panel-v6 .btn-preview,
 #enhanced-wb-panel-v6 .btn-delete {
@@ -1901,6 +1904,9 @@ div#wb-active-dropdown input.wb-gr-search-input:focus {
 }
 [data-theme='dark'] #enhanced-wb-panel-v6 .wb-btn-circle:hover {
     background: #e5e7eb; color: #18181b; border-color: #e5e7eb;
+}
+[data-theme='dark'] #enhanced-wb-panel-v6 .wb-btn-circle#btn-filter-enabled.active {
+    background: #7c5cbd; color: #ffffff; border-color: #7c5cbd;
 }
 [data-theme='dark'] #enhanced-wb-panel-v6 .btn-preview:hover {
     color: #ffffff !important;

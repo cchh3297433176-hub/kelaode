@@ -148,6 +148,7 @@ export const UI = {
                     </div>
                     <div class="wb-tool-bar">
                         <input class="wb-input-dark" id="wb-search-entry" style="flex:1; width:100%; border-radius:15px; padding-left:15px;" placeholder="搜索条目...">
+                        <button class="wb-btn-circle interactable" id="btn-filter-enabled" title="只看已启用条目"><i class="fa-solid fa-eye"></i></button>
                         <button class="wb-btn-circle interactable" id="btn-group-sort" title="分组排序管理"><i class="fa-solid fa-arrow-down-9-1"></i></button>
                         <button class="wb-btn-circle" id="btn-sort-priority" title="列表按优先级重排"><i class="fa-solid fa-filter"></i></button>
                         <button class="wb-btn-circle" id="btn-add-entry" title="新建条目"><i class="fa-solid fa-plus"></i></button>
@@ -217,12 +218,25 @@ export const UI = {
         $('#wb-book-selector').addEventListener('change', (e) => Actions.loadBook(e.target.value));
         this.bindSearchInput($('#wb-search-entry'), (val) => this.renderList(val));
         $('#btn-add-entry').onclick = () => Actions.addNewEntry();
+        $('#btn-filter-enabled').onclick = (e) => {
+            STATE.showOnlyEnabled = !STATE.showOnlyEnabled;
+            e.currentTarget.classList.toggle('active', STATE.showOnlyEnabled);
+            e.currentTarget.querySelector('i').className = STATE.showOnlyEnabled ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+            this.renderList($('#wb-search-entry').value);
+        };
         $('#btn-group-sort').onclick = () => this.openSortingModal();
         $('#btn-sort-priority').onclick = () => Actions.sortByPriority();
         $('#btn-wb-menu-theme').onclick = () => Actions.switchTheme();
 
         const savedTheme = localStorage.getItem(THEME_KEY) || 'light';
         Actions.applyTheme(savedTheme);
+
+        // 同步筛选按钮的显示状态（面板重新打开时保持上次的筛选选择）
+        const filterBtn = $('#btn-filter-enabled');
+        if (filterBtn) {
+            filterBtn.classList.toggle('active', STATE.showOnlyEnabled);
+            filterBtn.querySelector('i').className = STATE.showOnlyEnabled ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+        }
 
         const analysisBtn = $('#btn-wb-analysis');
         const analysisMenu = $('#wb-analysis-menu');
@@ -973,6 +987,14 @@ export const UI = {
         if (!list) return;
         const term = filterText.toLowerCase();
 
+        // 是否只显示当前启用的条目（筛选开关）
+        const applyVisibility = (card, entry) => {
+            const searchText = card.dataset.searchText || '';
+            const hasMatch = searchText.includes(term);
+            const passesEnabledFilter = !STATE.showOnlyEnabled || entry.disable === false;
+            card.classList.toggle('hidden', !(hasMatch && passesEnabledFilter));
+        };
+
         // 首次渲染（list为空）或搜索词为空时，重建完整DOM
         const isFirstRender = list.children.length === 0;
         const isClearSearch = term === '';
@@ -987,15 +1009,17 @@ export const UI = {
                 card.dataset.searchText = `${comment} ${content}`.toLowerCase();
                 list.appendChild(card);
                 this.applyCustomDropdown(`wb-pos-${entry.uid}`);
+                applyVisibility(card, entry);
             });
             return;
         }
 
         // === 增量过滤：仅切换 hidden 类 ===
         Array.from(list.children).forEach(card => {
-            const searchText = card.dataset.searchText || '';
-            const hasMatch = searchText.includes(term);
-            card.classList.toggle('hidden', !hasMatch);
+            const uid = Number(card.dataset.uid);
+            const entry = STATE.entries.find(e => e.uid === uid);
+            if (!entry) return;
+            applyVisibility(card, entry);
         });
     },
 
@@ -2931,6 +2955,10 @@ export const UI = {
             if (e.target.classList.contains('inp-enable')) {
                 card.classList.toggle('disabled', !e.target.checked);
                 Actions.updateEntry(uid, d => d.disable = !e.target.checked);
+                // 筛选模式下：条目被关闭后立刻从列表中隐藏
+                if (STATE.showOnlyEnabled && !e.target.checked) {
+                    card.classList.add('hidden');
+                }
             } else if (e.target.classList.contains('inp-type')) {
                 Actions.updateEntry(uid, d => {
                     d.constant = e.target.checked;
