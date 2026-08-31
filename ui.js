@@ -149,6 +149,7 @@ export const UI = {
                     <div class="wb-tool-bar">
                         <input class="wb-input-dark" id="wb-search-entry" style="flex:1; width:100%; border-radius:15px; padding-left:15px;" placeholder="搜索条目...">
                         <button class="wb-btn-circle interactable" id="btn-filter-enabled" title="只看已启用条目"><i class="fa-solid fa-eye"></i></button>
+                        <button class="wb-btn-circle interactable" id="btn-edit-lock" title="编辑锁：开启后编辑时不会自动重新排序"><i class="fa-solid fa-lock-open"></i></button>
                         <button class="wb-btn-circle interactable" id="btn-group-sort" title="分组排序管理"><i class="fa-solid fa-arrow-down-9-1"></i></button>
                         <button class="wb-btn-circle" id="btn-sort-priority" title="列表按优先级重排"><i class="fa-solid fa-filter"></i></button>
                         <button class="wb-btn-circle" id="btn-add-entry" title="新建条目"><i class="fa-solid fa-plus"></i></button>
@@ -224,6 +225,12 @@ export const UI = {
             e.currentTarget.querySelector('i').className = STATE.showOnlyEnabled ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
             this.renderList($('#wb-search-entry').value);
         };
+        $('#btn-edit-lock').onclick = (e) => {
+            const locked = Actions.toggleEditLock();
+            e.currentTarget.classList.toggle('active', locked);
+            e.currentTarget.querySelector('i').className = locked ? 'fa-solid fa-lock' : 'fa-solid fa-lock-open';
+            e.currentTarget.title = locked ? '编辑锁已开启：编辑期间不会自动重排，再次点击关闭' : '编辑锁：开启后编辑时不会自动重新排序';
+        };
         $('#btn-group-sort').onclick = () => this.openSortingModal();
         $('#btn-sort-priority').onclick = () => Actions.sortByPriority();
         $('#btn-wb-menu-theme').onclick = () => Actions.switchTheme();
@@ -236,6 +243,16 @@ export const UI = {
         if (filterBtn) {
             filterBtn.classList.toggle('active', STATE.showOnlyEnabled);
             filterBtn.querySelector('i').className = STATE.showOnlyEnabled ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye';
+        }
+
+        // 编辑锁：每次重新打开面板都重置为关闭状态，避免遗留锁定导致后续更新一直不刷新
+        STATE.editLock = false;
+        STATE.pendingReload = false;
+        const editLockBtn = $('#btn-edit-lock');
+        if (editLockBtn) {
+            editLockBtn.classList.remove('active');
+            editLockBtn.querySelector('i').className = 'fa-solid fa-lock-open';
+            editLockBtn.title = '编辑锁：开启后编辑时不会自动重新排序';
         }
 
         const analysisBtn = $('#btn-wb-analysis');

@@ -35,6 +35,10 @@ export const STATE = {
     // 编辑器视图：是否只显示当前已启用的条目
     showOnlyEnabled: false,
 
+    // 编辑锁：开启时暂停"世界书已更新"触发的自动重排/刷新，避免编辑中列表跳动
+    editLock: false,
+    pendingReload: false,
+
     boundBooksSet: {},
 
     bindings: {

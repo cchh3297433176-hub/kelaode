@@ -49,7 +49,15 @@ export const Actions = {
         const et = event_types;
 
         es.on(et.SETTINGS_UPDATED, () => { if (document.getElementById(CONFIG.id)) this.refreshAllContext(); });
-        es.on(et.WORLDINFO_UPDATED, (name, data) => { if (STATE.currentBookName === name) this.loadBook(name); });
+        es.on(et.WORLDINFO_UPDATED, (name, data) => {
+            if (STATE.currentBookName !== name) return;
+            if (STATE.editLock) {
+                // 编辑锁开启中：先记下有更新待应用，暂不刷新/重排，避免打断正在编辑的输入框
+                STATE.pendingReload = true;
+                return;
+            }
+            this.loadBook(name);
+        });
         es.on(et.CHAT_CHANGED, () => { if (document.getElementById(CONFIG.id)) this.refreshAllContext(); });
         es.on(et.CHARACTER_SELECTED, () => {
             setTimeout(() => {
@@ -173,6 +181,16 @@ export const Actions = {
                 toastr.error(`无法加载世界书 "${name}"`);
             }
         }
+    },
+
+    toggleEditLock() {
+        STATE.editLock = !STATE.editLock;
+        if (!STATE.editLock && STATE.pendingReload) {
+            // 关闭编辑锁时，如果编辑期间有未应用的更新，此时统一补一次刷新
+            STATE.pendingReload = false;
+            this.loadBook(STATE.currentBookName);
+        }
+        return STATE.editLock;
     },
 
     updateEntry(uid, updater) {
