@@ -1120,6 +1120,7 @@ export const UI = {
                 <!-- 预览和删除按钮 -->
                 <div class="wb-header-item wb-item-actions">
                     <i class="fa-solid fa-eye btn-preview" style="cursor:pointer!important;padding:5px!important;color:#6b7280!important;" title="编辑内容"></i>
+                    <i class="fa-solid fa-copy btn-copy" style="cursor:pointer!important;padding:5px!important;margin-left:5px!important;color:#6b7280!important;" title="复制条目"></i>
                     <i class="fa-solid fa-trash btn-delete" style="cursor:pointer!important;padding:5px!important;margin-left:5px!important;color:#6b7280!important;" title="删除条目"></i>
                 </div>
             </div>
@@ -3002,6 +3003,8 @@ export const UI = {
                 if (confirm("确定要删除此条目吗？")) {
                     Actions.deleteEntry(uid);
                 }
+            } else if (e.target.classList.contains('btn-copy')) {
+                Actions.duplicateEntry(uid);
             } else if (e.target.classList.contains('btn-preview')) {
                 const entry = STATE.entries.find(e => e.uid === uid);
                 if (entry) this.openContentPopup(entry, e.target);

@@ -248,6 +248,23 @@ export const Actions = {
         await this.loadBook(STATE.currentBookName);
     },
 
+    async duplicateEntry(uid) {
+        if (!STATE.currentBookName) return toastr.warning("请先选择一本世界书");
+        const original = STATE.entries.find(e => e.uid === uid);
+        if (!original) return toastr.error("未找到要复制的条目");
+
+        const maxUid = STATE.entries.reduce((max, e) => Math.max(max, Number(e.uid) || 0), -1);
+        const newUid = maxUid + 1;
+
+        const copy = structuredClone(original);
+        copy.uid = newUid;
+        copy.comment = `${original.comment || '条目'} (副本)`;
+
+        await API.createEntry(STATE.currentBookName, [copy]);
+        await this.loadBook(STATE.currentBookName);
+        toastr.success("已复制条目");
+    },
+
     sortByPriority() {
         STATE.entries.sort((a, b) => {
             const scoreA = this.getEntrySortScore(a);
