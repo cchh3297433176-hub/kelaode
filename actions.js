@@ -160,6 +160,7 @@ export const Actions = {
         if (!name) return;
         await this.flushPendingSave();
         STATE.currentBookName = name;
+        document.getElementById('wb-regex-editor')?.replaceChildren();
 
         try {
             const loadedEntries = await API.loadBook(name);
@@ -175,6 +176,7 @@ export const Actions = {
 
             UI.updateHeaderInfo();
             UI.renderList();
+            await UI.renderRegexEditor();
 
             const selector = document.getElementById('wb-book-selector');
             if (selector) selector.value = name;

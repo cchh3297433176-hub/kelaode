@@ -5,7 +5,7 @@ import { CONFIG, STATE, THEME_KEY, WI_POSITION_MAP, WI_POSITION_MAP_REV } from '
 import { API } from './api.js';
 import { Actions } from './actions.js';
 import { logger } from './logger.js';
-import { openManager } from './worldbook-regex.js';
+import { mountRegexManager } from './worldbook-regex.js';
 
 export const UI = {
     // 防抖辅助函数
@@ -117,7 +117,12 @@ export const UI = {
                 <div id="wb-view-editor" class="wb-view-section">
                     <div class="wb-book-bar">
                         <select id="wb-book-selector" style="flex:1;"><option>加载中...</option></select>
-                        <button class="wb-btn-circle" title="配套正则" aria-label="配套正则" id="btn-wb-regex"><i class="fa-solid fa-code"></i></button>
+                    </div>
+                    <div class="wb-book-actions">
+                        <div class="wb-editor-switch" role="tablist" aria-label="世界书编辑内容">
+                            <button type="button" id="wb-tab-entries" role="tab" aria-controls="wb-entry-editor" aria-selected="true" data-editor-mode="entries" class="active">条目</button>
+                            <button type="button" id="wb-tab-regex" role="tab" aria-controls="wb-regex-editor" aria-selected="false" data-editor-mode="regex">配套正则</button>
+                        </div>
                         <div class="wb-menu-wrapper">
                             <button class="wb-btn-circle" title="分析与统计" id="btn-wb-analysis"><i class="fa-solid fa-coins"></i></button>
                             <div class="wb-menu-dropdown" id="wb-analysis-menu">
@@ -141,6 +146,7 @@ export const UI = {
                         </div>
                         <input type="file" id="wb-import-file" accept=".json,.wb" style="display:none">
                     </div>
+                    <div id="wb-entry-editor" role="tabpanel" aria-labelledby="wb-tab-entries" class="wb-editor-pane">
                     <div class="wb-stat-line">
                         <div class="wb-stat-group">
                             <div id="wb-warning-stat" class="wb-warning-badge hidden" title="点击查看问题条目"><i class="fa-solid fa-circle-exclamation"></i> <span id="wb-warning-count">0</span></div>
@@ -157,6 +163,8 @@ export const UI = {
                         <button class="wb-btn-circle" id="btn-add-entry" title="新建条目"><i class="fa-solid fa-plus"></i></button>
                     </div>
                     <div class="wb-list" id="wb-entry-list"></div>
+                    </div>
+                    <div id="wb-regex-editor" role="tabpanel" aria-labelledby="wb-tab-regex" class="wb-editor-pane wb-hidden"></div>
                 </div>
 
                 <!-- 视图 2: 绑定管理 -->
@@ -219,10 +227,10 @@ export const UI = {
         };
         $$('.wb-tab').forEach(el => el.onclick = () => Actions.switchView(el.dataset.tab));
         $('#wb-book-selector').addEventListener('change', (e) => Actions.loadBook(e.target.value));
-        $('#btn-wb-regex').addEventListener('click', async () => {
-            try { await Actions.flushPendingSave(); await openManager(); }
+        $$('.wb-editor-switch button').forEach(button => button.addEventListener('click', async () => {
+            try { await Actions.flushPendingSave(); await this.switchEditorMode(button.dataset.editorMode); }
             catch (error) { toastr.error(error.message, '世界书正则'); }
-        });
+        }));
         this.bindSearchInput($('#wb-search-entry'), (val) => this.renderList(val));
         $('#btn-add-entry').onclick = () => Actions.addNewEntry();
         $('#btn-filter-enabled').onclick = (e) => {
@@ -377,6 +385,7 @@ export const UI = {
 
             if (targetBook) await Actions.loadBook(targetBook);
             else this.renderList();
+            await this.switchEditorMode();
 
         } catch (e) {
             logger.error("Panel Init Error:", e);
@@ -464,6 +473,23 @@ export const UI = {
         const close = () => overlay.remove();
         overlay.querySelector('.wb-btn-tag-filter-hint').onclick = close;
         overlay.onclick = (e) => { if (e.target === overlay) close(); };
+    },
+
+    async switchEditorMode(mode = STATE.editorMode || 'entries') {
+        STATE.editorMode = mode;
+        document.getElementById('wb-entry-editor')?.classList.toggle('wb-hidden', mode !== 'entries');
+        document.getElementById('wb-regex-editor')?.classList.toggle('wb-hidden', mode !== 'regex');
+        document.querySelectorAll('.wb-editor-switch button').forEach(button => {
+            const active = button.dataset.editorMode === mode;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', String(active));
+        });
+        if (mode === 'regex') await this.renderRegexEditor();
+    },
+
+    async renderRegexEditor() {
+        const host = document.getElementById('wb-regex-editor');
+        if (host && STATE.editorMode === 'regex') await mountRegexManager(host, STATE.currentBookName);
     },
 
     renderBookSelector() {
@@ -1471,9 +1497,15 @@ export const UI = {
         }
         const update = () => {
             const selectedOpt = originalSelect.options[originalSelect.selectedIndex];
-            trigger.innerHTML = `<span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; text-align:left;">${selectedOpt ? selectedOpt.text : '请选择...'}</span>`;
+            const label = document.createElement('span');
+            label.className = 'wb-selected-book-name';
+            label.textContent = selectedOpt ? selectedOpt.text : '请选择...';
+            trigger.title = label.textContent;
+            trigger.replaceChildren(label);
         };
         update();
+        if (originalSelect._wbDisplayUpdate) originalSelect.removeEventListener('change', originalSelect._wbDisplayUpdate);
+        originalSelect._wbDisplayUpdate = update;
         originalSelect.addEventListener('change', update);
     },
 

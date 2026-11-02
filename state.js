@@ -15,6 +15,7 @@ export const THEME_KEY = 'wb_ctx_theme';
 export const STATE = {
     currentView: 'editor', // 'editor' | 'binding' | 'manage'
     currentBookName: null,
+    editorMode: 'entries',
 
     isInitialized: false,
     isManageDirty: true,

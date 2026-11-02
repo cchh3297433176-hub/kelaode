@@ -97,6 +97,9 @@ function queuePanel() {
 function renderNativePanel() {
     const container = document.getElementById('regex_container');
     if (!container) return;
+    const drawer = container.querySelector('.regex_settings > .inline-drawer > .inline-drawer-content')
+        || document.getElementById('saved_regex_scripts')?.closest('.inline-drawer-content');
+    if (!drawer) return;
     // Keep original rows in place so native sortable indexes are not changed.
     const saved = document.getElementById('saved_regex_scripts');
     if (saved) for (const row of saved.children) {
@@ -104,12 +107,13 @@ function renderNativePanel() {
     }
     let panel = document.getElementById('wbr-native-panel');
     const signature = JSON.stringify([extension_settings[ENABLED_KEY] !== false, [...groups]]);
+    if (panel && panel.parentElement !== drawer) drawer.append(panel);
     if (panel && signature === nativeSignature) return;
     nativeSignature = signature;
     if (!panel) {
         panel = element('details', undefined, 'wbr-native');
         panel.id = 'wbr-native-panel';
-        container.append(panel);
+        drawer.append(panel);
     }
     panel.replaceChildren(element('summary', '世界书正则'));
     const enabledLabel = element('label', undefined, 'wbr-check');
@@ -255,11 +259,22 @@ export async function openManager(name = STATE.currentBookName, ruleId) {
         return;
     }
     const modal = dialog(`${name} · 配套正则`);
+    await mountRegexManager(modal, name, true);
+}
+
+const mountedEditors = new WeakMap();
+export async function mountRegexManager(host, name, keepHeader = false) {
+    const token = Symbol(name);
+    mountedEditors.set(host, token);
+    if (!keepHeader) host.replaceChildren();
+    if (!name) { host.append(element('p', '请先选择一本世界书')); return; }
     const toolbar = element('div', undefined, 'wbr-toolbar');
     const list = element('div');
     async function refresh() {
-        if (!modal.isConnected) return;
+        if (!host.isConnected || mountedEditors.get(host) !== token) return;
         const book = await getContext().loadWorldInfo(name);
+        if (!host.isConnected || mountedEditors.get(host) !== token) return;
+        if (!book) throw new Error('世界书不存在');
         const rules = readBundle(book);
         list.replaceChildren();
         if (!rules.length) list.append(element('p', '暂无配套正则'));
@@ -287,12 +302,26 @@ export async function openManager(name = STATE.currentBookName, ruleId) {
     };
     toolbar.append(button('新建', async () => { await editRule(name); await refresh(); }), button('导入', () => file.click()),
         button('复制已有', async () => { await copyExisting(name); await refresh(); }));
-    modal.append(toolbar, file, list); await refresh();
+    host.append(toolbar, file, list); await refresh();
+}
+
+export async function listBindingTargets() {
+    const [all, global, character] = await Promise.all([API.getAllBookNames(), API.getGlobalBindings(), API.getCharBindings()]);
+    return { all, global, primary: character.primary };
+}
+
+export async function bindGeneratedRegexes(name, inputs) {
+    if (!Array.isArray(inputs) || !inputs.length) throw new Error('没有可绑定的正则');
+    if (!(await API.getAllBookNames()).includes(name)) throw new Error('目标世界书已删除，请重新选择');
+    const copies = inputs.map(item => normalizeRegex({ ...item, id: createRegexId() }));
+    await mutateBook(name, rules => [...rules, ...copies]);
+    return { book: name, count: copies.length };
 }
 
 export async function initWorldbookRegex() {
     if (initialized) return;
     initialized = true;
+    window.KelaodeWorldbookRegex = Object.freeze({ version: 1, listTargets: listBindingTargets, bind: bindGeneratedRegexes });
     // Saved runtime copies are never treated as source data.
     clearCopies();
     const names = ['CHAT_CHANGED', 'CHARACTER_SELECTED', 'CHARACTER_EDITED', 'WORLDINFO_SETTINGS_UPDATED',

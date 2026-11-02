@@ -60,13 +60,13 @@ async function runtime() {
     const context = vm.createContext({ console, structuredClone, crypto, setTimeout, clearTimeout, queueMicrotask,
         document: { getElementById: () => null, querySelectorAll: () => [] }, toastr: { error() {} } });
     const coreModule = new vm.SourceTextModule(coreSource, { context });
-    const ctx = { loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
+    const ctx = { saveWorldInfo: async (name, book) => { state.books[name] = structuredClone(book); }, loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
     const bindings = {
         '../../../extensions.js': { getContext: () => ctx, extension_settings: state.settings },
         '../../../../script.js': { eventSource: { on() {} }, event_types: {}, updateMessageBlock() {} },
         '../../../power-user.js': { power_user: state.persona },
         '../../regex/engine.js': { getRegexScripts: () => state.settings.regex },
-        './api.js': { API: { getGlobalBindings: async () => state.globals, getCharBindings: async () => state.character, getChatBinding: async () => state.chat } },
+        './api.js': { API: { getAllBookNames: async () => Object.keys(state.books), getGlobalBindings: async () => state.globals, getCharBindings: async () => state.character, getChatBinding: async () => state.chat } },
         './state.js': { STATE: {} },
     };
     const modules = new Map();
@@ -76,7 +76,7 @@ async function runtime() {
     const module = new vm.SourceTextModule(await readFile(new URL('../worldbook-regex.js', import.meta.url), 'utf8'), { context });
     await module.link(specifier => specifier === './worldbook-regex-core.js' ? coreModule : modules.get(specifier));
     await module.evaluate();
-    return { state, sync: module.namespace.synchronize };
+    return { state, sync: module.namespace.synchronize, bind: module.namespace.bindGeneratedRegexes, listTargets: module.namespace.listBindingTargets };
 }
 
 test('multiple binding sources load a book once; character/chat switches clear stale copies', async () => {
@@ -131,4 +131,30 @@ test('pausing linkage clears runtime copies while preserving portable originals'
     state.settings.kelaode_worldbook_regex_enabled = true;
     await sync();
     assert.equal(state.settings.regex.length, 2);
+});
+
+
+test('generator binding appends display and send rules atomically without enabling the book', async () => {
+    const { state, bind, listTargets } = await runtime();
+    state.globals = ['A']; state.character = { primary: 'A', additional: [] }; state.chat = null;
+    const target = await listTargets();
+    assert.deepEqual(Array.from(target.all), ['A', 'B']);
+    assert.equal(target.primary, 'A');
+    assert.deepEqual(Object.keys(target).sort(), ['all', 'global', 'primary']);
+    const before = core.readBundle(state.books.B).length;
+    await bind('B', [{ script_name: '生成状态栏', find_regex: '/foo/g', replace_string: '<div>foo</div>',
+        source: { ai_output: true }, destination: { display: true, prompt: false } },
+        { script_name: '发送过滤', find_regex: '/foo/g', replace_string: '', min_depth: 3,
+            source: { ai_output: true }, destination: { display: false, prompt: true } }]);
+    const saved = core.readBundle(state.books.B);
+    assert.equal(saved.length, before + 2);
+    assert.equal(saved.at(-1).promptOnly, true);
+    assert.equal(saved.at(-1).minDepth, 3);
+    assert.equal(saved.at(-2).markdownOnly, true);
+    assert.deepEqual(state.globals, ['A']);
+    assert.equal(state.settings.regex.filter(core.isManaged).every(x => x[core.OWNER_KEY].book === 'A'), true);
+    await assert.rejects(bind('missing', [rule()]), /目标世界书已删除/);
+    const count = saved.length;
+    await assert.rejects(bind('B', [rule(), { find_regex: '/[/g' }]));
+    assert.equal(core.readBundle(state.books.B).length, count);
 });

@@ -3811,3 +3811,17 @@ body[data-theme="dark"] #enhanced-wb-panel-v6 #wb-manage-content.mode-custom .wb
 .wbr-form fieldset { display: flex; gap: 8px 14px; flex-wrap: wrap; border: 1px solid var(--SmartThemeBorderColor, #8886); }
 .wbr-check { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .wbr-dialog input[type=checkbox] { flex: none; }
+
+/* Keep the selected title and actions on independent, width-constrained rows. */
+#enhanced-wb-panel-v6 .wb-book-bar { min-width: 0; }
+#enhanced-wb-panel-v6 #wb-trigger-wb-book-selector { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+#enhanced-wb-panel-v6 .wb-selected-book-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+#enhanced-wb-panel-v6 .wb-book-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 10px; flex-shrink: 0; min-width: 0; }
+#enhanced-wb-panel-v6 .wb-editor-switch { display: flex; gap: 4px; margin-right: auto; }
+#enhanced-wb-panel-v6 .wb-editor-switch button { border: 0; padding: 8px 10px; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; white-space: nowrap; }
+#enhanced-wb-panel-v6 .wb-editor-switch button.active { background: var(--SmartThemeQuoteColor, #7c5cbd); color: white; }
+#enhanced-wb-panel-v6 .wb-editor-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+#enhanced-wb-panel-v6 #wb-regex-editor { overflow-y: auto; padding-bottom: 60px; }
+#enhanced-wb-panel-v6 #wb-regex-editor > .wbr-toolbar { flex-shrink: 0; position: sticky; top: 0; z-index: 1; background: inherit; }
+.wbr-native summary { overflow-wrap: anywhere; }
+#wb-active-dropdown[data-source="wb-book-selector"] .wb-gr-option { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
