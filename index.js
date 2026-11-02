@@ -6,6 +6,7 @@ import { CONFIG } from './state.js';
 import { Actions } from './actions.js';
 import { UI } from './ui.js';
 import { logger } from './logger.js';
+import { initWorldbookRegex } from './worldbook-regex.js';
 
 jQuery(async () => {
 
@@ -40,6 +41,7 @@ jQuery(async () => {
 
     const performInit = async () => {
         try {
+            await initWorldbookRegex().catch(error => logger.error('Worldbook regex initialization failed:', error));
             await Actions.init();
             logger.info("Pre-loading complete.");
         } catch (e) {

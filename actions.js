@@ -7,6 +7,8 @@ import { CONFIG, STATE, THEME_KEY } from './state.js';
 import { API, setCharBindings, charSetAuxWorlds } from './api.js';
 import { UI } from './ui.js';
 import { logger } from './logger.js';
+import { importWorldbook } from './worldbook-regex-core.js';
+import { requestRegexSync } from './worldbook-regex.js';
 
 export const Actions = {
     async flushPendingSave() {
@@ -113,6 +115,7 @@ export const Actions = {
             });
 
             UI.renderBookSelector();
+            requestRegexSync();
         } catch (e) {
             logger.error("Failed to refresh context:", e);
         }
@@ -362,6 +365,7 @@ export const Actions = {
 
             // Wait for all operations to settle
             await Promise.all(promises);
+            requestRegexSync();
 
             // Do not force refresh here; rely on optimistic UI and eventual SETTINGS_UPDATED event
             toastr.success("绑定设置已保存");
@@ -482,9 +486,7 @@ export const Actions = {
         const reader = new FileReader();
         reader.onload = async (e) => {
             try {
-                const content = JSON.parse(e.target.result);
-                let entries = content.entries ? Object.values(content.entries) : content;
-                if (!Array.isArray(entries)) entries = [];
+                const content = importWorldbook(JSON.parse(e.target.result));
 
                 let bookName = file.name.replace(/\.(json|wb)$/i, '');
                 const name = prompt("请输入导入后的世界书名称:", bookName);
@@ -493,8 +495,10 @@ export const Actions = {
                 if (STATE.allBookNames.includes(name)) {
                     if (!confirm(`世界书 "${name}" 已存在，是否覆盖？`)) return;
                 }
-                if (!STATE.allBookNames.includes(name)) await API.createWorldbook(name);
-                await API.saveBookEntries(name, entries);
+                await this.flushPendingSave();
+                await getContext().saveWorldInfo(name, content, true);
+                await getContext().updateWorldInfoList();
+                requestRegexSync();
                 toastr.success(`导入成功: ${name}`);
                 await this.refreshAllContext();
                 await this.loadBook(name);
@@ -506,10 +510,9 @@ export const Actions = {
     async actionExport() {
         if (!STATE.currentBookName) return toastr.warning("请先选择一本世界书");
         try {
-            const entries = await API.loadBook(STATE.currentBookName);
-            const entriesObj = {};
-            entries.forEach(entry => { entriesObj[entry.uid] = entry; });
-            const exportData = { entries: entriesObj };
+            await this.flushPendingSave();
+            const exportData = await getContext().loadWorldInfo(STATE.currentBookName);
+            if (!exportData) throw new Error('世界书不存在');
             const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');

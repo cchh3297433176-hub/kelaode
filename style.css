@@ -3790,3 +3790,24 @@ body[data-theme="dark"] #enhanced-wb-panel-v6 #wb-manage-content.mode-custom .wb
     -moz-appearance: textfield !important;
     appearance: textfield !important;
 }
+/* Worldbook-owned regexes: native storage, separate presentation. */
+#saved_regex_scripts > .wbr-managed-row { display: none !important; }
+.wbr-native { margin: 12px 0; padding: 10px; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 8px; }
+.wbr-native summary, .wbr-dialog summary { cursor: pointer; padding: 8px 0; }
+.wbr-book-group { margin: 6px 0 6px 12px; }
+.wbr-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--SmartThemeBorderColor, #8883); }
+.wbr-rule > label { display: flex; gap: 8px; align-items: center; flex: 1 1 150px; min-width: 0; overflow-wrap: anywhere; }
+.wbr-rule .menu_button { width: auto; margin: 0; }
+.wbr-empty { opacity: .65; padding: 8px 0; }
+.wbr-dialog { box-sizing: border-box; width: min(640px, 94vw); max-height: 86dvh; overflow-y: auto; color: var(--SmartThemeBodyColor, #eee); background: var(--SmartThemeBlurTintColor, #252530); border: 1px solid var(--SmartThemeBorderColor, #888); border-radius: 12px; padding: 16px; }
+.wbr-dialog::backdrop { background: #0009; }
+.wbr-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.wbr-toolbar > strong { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wbr-toolbar .menu_button { width: auto; margin: 0; }
+.wbr-form { display: grid; gap: 12px; }
+.wbr-form > label:not(.wbr-check) { display: grid; gap: 6px; }
+.wbr-form input:not([type=checkbox]), .wbr-form textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; color: inherit; background: #8881; border: 1px solid var(--SmartThemeBorderColor, #8886); border-radius: 6px; }
+.wbr-form textarea { resize: vertical; font-family: monospace; }
+.wbr-form fieldset { display: flex; gap: 8px 14px; flex-wrap: wrap; border: 1px solid var(--SmartThemeBorderColor, #8886); }
+.wbr-check { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+.wbr-dialog input[type=checkbox] { flex: none; }

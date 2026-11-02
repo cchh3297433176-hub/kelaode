@@ -5,6 +5,7 @@ import { CONFIG, STATE, THEME_KEY, WI_POSITION_MAP, WI_POSITION_MAP_REV } from '
 import { API } from './api.js';
 import { Actions } from './actions.js';
 import { logger } from './logger.js';
+import { openManager } from './worldbook-regex.js';
 
 export const UI = {
     // 防抖辅助函数
@@ -116,6 +117,7 @@ export const UI = {
                 <div id="wb-view-editor" class="wb-view-section">
                     <div class="wb-book-bar">
                         <select id="wb-book-selector" style="flex:1;"><option>加载中...</option></select>
+                        <button class="wb-btn-circle" title="配套正则" aria-label="配套正则" id="btn-wb-regex"><i class="fa-solid fa-code"></i></button>
                         <div class="wb-menu-wrapper">
                             <button class="wb-btn-circle" title="分析与统计" id="btn-wb-analysis"><i class="fa-solid fa-coins"></i></button>
                             <div class="wb-menu-dropdown" id="wb-analysis-menu">
@@ -217,6 +219,10 @@ export const UI = {
         };
         $$('.wb-tab').forEach(el => el.onclick = () => Actions.switchView(el.dataset.tab));
         $('#wb-book-selector').addEventListener('change', (e) => Actions.loadBook(e.target.value));
+        $('#btn-wb-regex').addEventListener('click', async () => {
+            try { await Actions.flushPendingSave(); await openManager(); }
+            catch (error) { toastr.error(error.message, '世界书正则'); }
+        });
         this.bindSearchInput($('#wb-search-entry'), (val) => this.renderList(val));
         $('#btn-add-entry').onclick = () => Actions.addNewEntry();
         $('#btn-filter-enabled').onclick = (e) => {
