@@ -1,7 +1,8 @@
 import { getContext, extension_settings } from '../../../extensions.js';
 import { eventSource, event_types, updateMessageBlock } from '../../../../script.js';
+import { worldInfoCache } from '../../../world-info.js';
 import { power_user } from '../../../power-user.js';
-import { getRegexScripts } from '../../regex/engine.js';
+import { SCRIPT_TYPES, getScriptsByType, saveScriptsByType, getCurrentPresetAPI, getCurrentPresetName } from '../../regex/engine.js';
 import { API } from './api.js';
 import { STATE } from './state.js';
 import { readBundle, writeBundle, normalizeRegex, parseRegexImport, isManaged, runtimeCopies, replaceManaged, createRegexId } from './worldbook-regex-core.js';
@@ -158,16 +159,38 @@ function renderNativePanel() {
 
 // Serialize writes to avoid one checkbox/edit replacing another in flight.
 let writes = Promise.resolve();
-function mutateBook(name, update) {
-    const work = writes.catch(() => {}).then(async () => {
-        const book = await getContext().loadWorldInfo(name);
-        if (!book) throw new Error('世界书不存在');
-        const updated = writeBundle(book, update(readBundle(book)));
-        await getContext().saveWorldInfo(name, updated, true);
-        await synchronize();
-    });
+function queueWrite(operation) {
+    const work = writes.catch(() => {}).then(operation);
     writes = work;
     return work;
+}
+
+export async function saveBookChecked(name, data) {
+    const response = await fetch('/api/worldinfo/edit', {
+        method: 'POST',
+        headers: getContext().getRequestHeaders(),
+        body: JSON.stringify({ name, data }),
+    });
+    if (!response.ok) throw new Error(`保存世界书失败（HTTP ${response.status}）`);
+    worldInfoCache.set(name, data);
+    try {
+        await eventSource.emit(event_types.WORLDINFO_UPDATED, name, data);
+    } catch (error) {
+        console.warn('[世界书正则] 已保存，更新通知失败', error);
+    }
+}
+
+export function updateBook(name, update) {
+    return queueWrite(async () => {
+        const book = await getContext().loadWorldInfo(name);
+        if (!book) throw new Error('世界书不存在');
+        await saveBookChecked(name, update(book));
+        await synchronize().catch(report);
+    });
+}
+
+function mutateBook(name, update) {
+    return updateBook(name, book => writeBundle(book, update(readBundle(book))));
 }
 
 function dialog(title) {
@@ -232,22 +255,147 @@ async function editRule(name, original) {
     return new Promise(resolve => modal.addEventListener('close', resolve, { once: true }));
 }
 
-async function copyExisting(name) {
-    const modal = dialog('复制已有正则');
-    const scripts = getRegexScripts().filter(script => !isManaged(script));
-    const selected = [];
-    for (const script of scripts) {
-        const label = element('label', undefined, 'wbr-check');
-        const input = element('input'); input.type = 'checkbox';
-        selected.push([script, input]); label.append(input, document.createTextNode(script.scriptName)); modal.append(label);
+function picker(title) {
+    const modal = dialog(title);
+    modal.classList.add('wbr-picker');
+    return modal;
+}
+
+function pickerFooter(action) {
+    const footer = element('div', undefined, 'wbr-picker-footer');
+    footer.append(action);
+    return footer;
+}
+
+function sourceKey(type) {
+    if (type === SCRIPT_TYPES.PRESET) return JSON.stringify([getCurrentPresetAPI(), getCurrentPresetName()]);
+    if (type === SCRIPT_TYPES.SCOPED) {
+        const { characters, characterId } = getContext();
+        return characters?.[characterId]?.avatar;
     }
-    if (!scripts.length) modal.append(element('p', '没有可复制的正则'));
-    modal.append(button('复制到世界书', async () => {
-        const chosen = selected.filter(([, input]) => input.checked).map(([script]) => normalizeRegex({ ...script, id: createRegexId() }));
-        if (!chosen.length) return;
-        await mutateBook(name, rules => [...rules, ...chosen]); modal.close();
-    }));
+    return type;
+}
+
+async function moveExisting(name) {
+    const modal = picker('移动已有正则');
+    const list = element('div', undefined, 'wbr-picker-list');
+    const groups = [];
+    for (const [title, type] of [['全局', SCRIPT_TYPES.GLOBAL], ['预设', SCRIPT_TYPES.PRESET], ['角色卡', SCRIPT_TYPES.SCOPED]]) {
+        const details = element('details');
+        const scripts = getScriptsByType(type, { allowedOnly: false }).filter(rule => !isManaged(rule));
+        details.open = type === SCRIPT_TYPES.GLOBAL;
+        details.append(element('summary', `${title}（${scripts.length}）`));
+        const items = scripts.map(rule => {
+            const label = element('label', undefined, 'wbr-check');
+            const input = element('input');
+            input.type = 'checkbox';
+            label.append(input, document.createTextNode(rule.scriptName));
+            details.append(label);
+            return { input, id: rule.id, snapshot: JSON.stringify(rule) };
+        });
+        groups.push({ type, key: sourceKey(type), items });
+        list.append(details);
+    }
+
+    const close = modal.querySelector('.wbr-toolbar button');
+    const hasSelection = () => groups.some(group => group.items.some(({ input }) => input.checked));
+    const move = button('移到世界书', async () => {
+        move.disabled = close.disabled = list.inert = true;
+        try {
+            await queueWrite(async () => {
+                let book = await getContext().loadWorldInfo(name);
+                if (!book) throw new Error('世界书不存在');
+                for (const { type, key, items } of groups) {
+                    const chosen = items.filter(({ input }) => input.checked);
+                    if (!chosen.length) continue;
+                    const ids = new Set(chosen.map(({ id }) => id));
+                    const getSource = () => {
+                        const current = getScriptsByType(type, { allowedOnly: false });
+                        if (sourceKey(type) !== key || chosen.some(({ id, snapshot }) => {
+                            const matches = current.filter(rule => rule.id === id);
+                            return matches.length !== 1 || JSON.stringify(matches[0]) !== snapshot;
+                        })) throw new Error('原位置的正则已变化，请重新打开弹窗');
+                        return current;
+                    };
+                    getSource();
+                    const added = chosen.map(({ snapshot }) => normalizeRegex({ ...JSON.parse(snapshot), id: createRegexId() }));
+                    const updated = writeBundle(book, [...readBundle(book), ...added]);
+                    await saveBookChecked(name, updated);
+                    try {
+                        const remaining = getSource().filter(rule => !ids.has(rule.id) && !isManaged(rule));
+                        await saveScriptsByType(remaining, type);
+                    } catch (error) {
+                        await saveBookChecked(name, book);
+                        throw error;
+                    }
+                    book = updated;
+                    for (const { input } of chosen) {
+                        input.checked = false;
+                        input.disabled = true;
+                    }
+                }
+            });
+            modal.close();
+        } finally {
+            close.disabled = list.inert = false;
+            move.disabled = !hasSelection();
+            requestRegexSync();
+        }
+    });
+    move.disabled = true;
+    list.onchange = () => { move.disabled = !hasSelection(); };
+    modal.addEventListener('cancel', event => { if (list.inert) event.preventDefault(); });
+    modal.append(list, pickerFooter(move));
     return new Promise(resolve => modal.addEventListener('close', resolve, { once: true }));
+}
+
+export function pickUpdateBook(names, metadata, onSelect) {
+    const modal = picker('更新已有世界书');
+    const search = element('input');
+    search.type = 'search';
+    search.placeholder = '搜索书名或标签';
+    search.setAttribute('aria-label', search.placeholder);
+    const list = element('div', undefined, 'wbr-picker-list');
+    let selected;
+    const choose = button('选择新版文件', () => { modal.close(); onSelect(selected); });
+    function render() {
+        const query = search.value.trim().toLowerCase();
+        selected = undefined;
+        choose.disabled = true;
+        list.replaceChildren();
+        for (const name of names) {
+            const tags = metadata[name]?.tags || [];
+            if (![name, ...tags].some(value => String(value).toLowerCase().includes(query))) continue;
+            const label = element('label', undefined, 'wbr-check');
+            const input = element('input');
+            input.type = 'radio';
+            input.name = 'wbr-update-book';
+            input.onchange = () => { selected = name; choose.disabled = false; };
+            label.append(input, document.createTextNode([name, ...tags].join(' · ')));
+            list.append(label);
+        }
+        if (!list.children.length) list.append(element('p', '没有匹配的世界书'));
+    }
+    search.oninput = render;
+    render();
+    modal.append(search, list, pickerFooter(choose));
+}
+
+export function confirmBookUpdate(name, filename, hasRegex) {
+    const modal = dialog('更新世界书');
+    modal.append(element('p', `用「${filename}」替换「${name}」的条目？`));
+    const input = element('input');
+    input.type = 'checkbox';
+    if (hasRegex) {
+        const label = element('label', undefined, 'wbr-check');
+        label.append(input, document.createTextNode('同时替换绑定正则'));
+        modal.append(label);
+    }
+    modal.append(pickerFooter(button('确认更新', () => modal.close('update'))));
+    return new Promise(resolve => modal.addEventListener('close', () => resolve({
+        confirmed: modal.returnValue === 'update',
+        updateRegex: input.checked,
+    }), { once: true }));
 }
 
 export async function openManager(name = STATE.currentBookName, ruleId) {
@@ -301,7 +449,7 @@ export async function mountRegexManager(host, name, keepHeader = false) {
         finally { file.value = ''; }
     };
     toolbar.append(button('新建', async () => { await editRule(name); await refresh(); }), button('导入', () => file.click()),
-        button('复制已有', async () => { await copyExisting(name); await refresh(); }));
+        button('移动已有', async () => { await moveExisting(name); await refresh(); }));
     host.append(toolbar, file, list); await refresh();
 }
 

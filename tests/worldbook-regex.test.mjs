@@ -58,14 +58,20 @@ async function runtime() {
         A: core.writeBundle({ entries: {} }, [rule()]), B: core.writeBundle({ entries: {} }, [rule({ id: 'r2' })]),
     }, settings: { regex: [{ id: 'user', scriptName: 'untouched' }, ...core.runtimeCopies('stale', [rule()])] }, persona: {}, waits: {} };
     const context = vm.createContext({ console, structuredClone, crypto, setTimeout, clearTimeout, queueMicrotask,
+        fetch: async (_url, { body }) => {
+            const { name, data } = JSON.parse(body);
+            state.books[name] = data;
+            return { ok: true };
+        },
         document: { getElementById: () => null, querySelectorAll: () => [] }, toastr: { error() {} } });
     const coreModule = new vm.SourceTextModule(coreSource, { context });
-    const ctx = { saveWorldInfo: async (name, book) => { state.books[name] = structuredClone(book); }, loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
+    const ctx = { getRequestHeaders: () => ({}), saveWorldInfo: async (name, book) => { state.books[name] = structuredClone(book); }, loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
     const bindings = {
         '../../../extensions.js': { getContext: () => ctx, extension_settings: state.settings },
-        '../../../../script.js': { eventSource: { on() {} }, event_types: {}, updateMessageBlock() {} },
+        '../../../../script.js': { eventSource: { on() {}, async emit() {} }, event_types: {}, updateMessageBlock() {} },
+        '../../../world-info.js': { worldInfoCache: new Map() },
         '../../../power-user.js': { power_user: state.persona },
-        '../../regex/engine.js': { getRegexScripts: () => state.settings.regex },
+        '../../regex/engine.js': { SCRIPT_TYPES: { GLOBAL: 'global', SCOPED: 'scoped', PRESET: 'preset' }, getScriptsByType: () => state.settings.regex, saveScriptsByType() {}, getCurrentPresetAPI() {}, getCurrentPresetName() {} },
         './api.js': { API: { getAllBookNames: async () => Object.keys(state.books), getGlobalBindings: async () => state.globals, getCharBindings: async () => state.character, getChatBinding: async () => state.chat } },
         './state.js': { STATE: {} },
     };

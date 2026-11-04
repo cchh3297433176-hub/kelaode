@@ -135,7 +135,9 @@ export const UI = {
                             <button class="wb-btn-circle" title="更多操作" id="btn-wb-menu-trigger"><i class="fa-solid fa-magic-wand-sparkles interactable"></i></button>
                             <div class="wb-menu-dropdown" id="wb-main-menu">
                                 <div class="wb-menu-item" data-action="import"><i class="fa-solid fa-file-import"></i> 导入世界书</div>
-                                <div class="wb-menu-item" data-action="export"><i class="fa-solid fa-file-export"></i> 导出世界书</div>
+                                <div class="wb-menu-item" data-action="update"><i class="fa-solid fa-rotate"></i> 更新已有世界书</div>
+                                <div class="wb-menu-item" data-action="export"><i class="fa-solid fa-file-export"></i> 仅导出世界书</div>
+                                <div class="wb-menu-item" data-action="export_bundle"><i class="fa-solid fa-file-export"></i> 连同正则导出</div>
                                 <div class="wb-menu-item" data-action="create"><i class="fa-solid fa-plus"></i> 新建世界书</div>
                                 <div class="wb-menu-item" data-action="rename"><i class="fa-solid fa-pen"></i> 重命名世界书</div>
                                 <div class="wb-menu-item danger" data-action="delete"><i class="fa-solid fa-trash"></i> 删除世界书</div>
@@ -302,7 +304,8 @@ export const UI = {
                 menuDropdown.classList.remove('show');
                 const action = item.dataset.action;
                 if (action === 'import') Actions.actionImport();
-                else if (action === 'export') Actions.actionExport();
+                else if (action === 'update') Actions.actionUpdate();
+                else if (action === 'export' || action === 'export_bundle') Actions.actionExport(action === 'export_bundle');
                 else if (action === 'create') Actions.actionCreateNew();
                 else if (action === 'rename') Actions.actionRename();
                 else if (action === 'delete') Actions.actionDelete();
@@ -317,7 +320,8 @@ export const UI = {
         const fileInput = $('#wb-import-file');
         fileInput.onchange = (e) => {
             if (e.target.files.length > 0) {
-                Actions.actionHandleImport(e.target.files[0]);
+                Actions.actionHandleImport(e.target.files[0], fileInput.dataset.updateBook);
+                delete fileInput.dataset.updateBook;
                 fileInput.value = '';
             }
         };

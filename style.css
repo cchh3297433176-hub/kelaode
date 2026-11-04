@@ -3825,3 +3825,9 @@ body[data-theme="dark"] #enhanced-wb-panel-v6 #wb-manage-content.mode-custom .wb
 #enhanced-wb-panel-v6 #wb-regex-editor > .wbr-toolbar { flex-shrink: 0; position: sticky; top: 0; z-index: 1; background: inherit; }
 .wbr-native summary { overflow-wrap: anywhere; }
 #wb-active-dropdown[data-source="wb-book-selector"] .wb-gr-option { white-space: normal; overflow-wrap: anywhere; text-overflow: clip; }
+
+.wbr-dialog.wbr-picker[open] { display: flex; flex-direction: column; overflow: hidden; }
+.wbr-picker > .wbr-toolbar, .wbr-picker > input { flex: none; }
+.wbr-picker-list { min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
+.wbr-picker-footer { display: flex; justify-content: flex-end; flex: none; padding-top: 10px; }
+.wbr-picker-footer button { width: auto; max-width: 100%; white-space: nowrap; }

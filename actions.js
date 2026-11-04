@@ -7,8 +7,8 @@ import { CONFIG, STATE, THEME_KEY } from './state.js';
 import { API, setCharBindings, charSetAuxWorlds } from './api.js';
 import { UI } from './ui.js';
 import { logger } from './logger.js';
-import { importWorldbook } from './worldbook-regex-core.js';
-import { requestRegexSync } from './worldbook-regex.js';
+import { BUNDLE_KEY, importWorldbook, readBundle, writeBundle } from './worldbook-regex-core.js';
+import { confirmBookUpdate, pickUpdateBook, requestRegexSync, saveBookChecked, updateBook } from './worldbook-regex.js';
 
 export const Actions = {
     async flushPendingSave() {
@@ -481,45 +481,60 @@ export const Actions = {
         }
     },
 
-    async actionImport() { document.getElementById('wb-import-file').click(); },
-    
-    async actionHandleImport(file) {
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = async (e) => {
-            try {
-                const content = importWorldbook(JSON.parse(e.target.result));
-
-                let bookName = file.name.replace(/\.(json|wb)$/i, '');
-                const name = prompt("请输入导入后的世界书名称:", bookName);
-                if (!name) return;
-
-                if (STATE.allBookNames.includes(name)) {
-                    if (!confirm(`世界书 "${name}" 已存在，是否覆盖？`)) return;
-                }
-                await this.flushPendingSave();
-                await getContext().saveWorldInfo(name, content, true);
-                await getContext().updateWorldInfoList();
-                requestRegexSync();
-                toastr.success(`导入成功: ${name}`);
-                await this.refreshAllContext();
-                await this.loadBook(name);
-            } catch (err) { toastr.error("导入失败: " + err.message); }
-        };
-        reader.readAsText(file);
+    actionImport(target) {
+        const input = document.getElementById('wb-import-file');
+        if (target) input.dataset.updateBook = target;
+        else delete input.dataset.updateBook;
+        input.click();
     },
 
-    async actionExport() {
+    async actionUpdate() {
+        try {
+            const names = await API.getAllBookNames();
+            pickUpdateBook(names, API.getMetadata() || {}, name => this.actionImport(name));
+        } catch (error) { toastr.error('无法选择世界书: ' + error.message); }
+    },
+
+    async actionHandleImport(file, target) {
+        if (!file) return;
+        try {
+            const content = importWorldbook(JSON.parse(await file.text()));
+            const name = target ?? prompt('请输入导入后的世界书名称:', file.name.replace(/\.(json|wb)$/i, ''));
+            if (!name) return;
+            if (target || (await API.getAllBookNames()).includes(name)) {
+                const { confirmed, updateRegex } = await confirmBookUpdate(
+                    name, file.name, Object.hasOwn(content.extensions || {}, BUNDLE_KEY));
+                if (!confirmed) return;
+                await this.flushPendingSave();
+                await updateBook(name, existing => {
+                    const updated = { ...existing, entries: content.entries };
+                    return updateRegex ? writeBundle(updated, readBundle(content)) : updated;
+                });
+            } else {
+                await this.flushPendingSave();
+                await saveBookChecked(name, content);
+                await getContext().updateWorldInfoList();
+                requestRegexSync();
+            }
+            toastr.success(`${target ? '更新' : '导入'}成功: ${name}`);
+            STATE.isManageDirty = true;
+            await this.refreshAllContext();
+            await this.loadBook(name);
+        } catch (error) { toastr.error(`${target ? '更新' : '导入'}失败: ${error.message}`); }
+    },
+
+    async actionExport(includeRegex = false) {
         if (!STATE.currentBookName) return toastr.warning("请先选择一本世界书");
         try {
             await this.flushPendingSave();
-            const exportData = await getContext().loadWorldInfo(STATE.currentBookName);
+            const exportData = structuredClone(await getContext().loadWorldInfo(STATE.currentBookName));
             if (!exportData) throw new Error('世界书不存在');
+            if (!includeRegex && exportData.extensions) delete exportData.extensions[BUNDLE_KEY];
             const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${STATE.currentBookName}.json`;
+            a.download = `${STATE.currentBookName}${includeRegex ? '-含正则' : ''}.json`;
             a.click();
             URL.revokeObjectURL(url);
         } catch (e) { toastr.error("导出失败: " + e.message); }

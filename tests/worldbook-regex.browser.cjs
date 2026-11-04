@@ -9,20 +9,26 @@ const assert = require('assert/strict');
  const prefix='/scripts/extensions/third-party/kelaode/';
  const mocks={
  '/scripts/extensions.js':`export const extension_settings=window.fixture.settings; export const getContext=()=>window.fixture.context;`,
- '/script.js':`export const event_types={CHAT_CHANGED:'chat',WORLDINFO_SETTINGS_UPDATED:'world',WORLDINFO_UPDATED:'updated',GENERATION_AFTER_COMMANDS:'generation'}; export const eventSource={on:(name,fn)=>(window.fixture.events[name]??=[]).push(fn)}; export function updateMessageBlock(){}`,
+ '/script.js':`export const event_types={CHAT_CHANGED:'chat',WORLDINFO_SETTINGS_UPDATED:'world',WORLDINFO_UPDATED:'updated',GENERATION_AFTER_COMMANDS:'generation'}; export const eventSource={emit:async()=>{},on:(name,fn)=>(window.fixture.events[name]??=[]).push(fn)}; export function updateMessageBlock(){}`,
+ '/scripts/world-info.js':`export const worldInfoCache=new Map();`,
  '/scripts/power-user.js':`export const power_user={};`,
- '/scripts/extensions/regex/engine.js':`export const getRegexScripts=()=>window.fixture.settings.regex;`,
+ '/scripts/extensions/regex/engine.js':`export const SCRIPT_TYPES={GLOBAL:'global',SCOPED:'scoped',PRESET:'preset'}; export const getScriptsByType=type=>type==='global'?fixture.settings.regex:[]; export const saveScriptsByType=async scripts=>{fixture.settings.regex=scripts}; export const getCurrentPresetAPI=()=>null; export const getCurrentPresetName=()=>null;`,
  [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null};`,
  [prefix+'actions.js']:`import {STATE} from './state.js'; export const Actions={flushPendingSave:async()=>{},applyTheme:()=>{},switchView:()=>{},getTokenCount:()=>0,refreshAllContext:async()=>{STATE.allBookNames=Object.keys(fixture.books);STATE.bindings={char:{primary:null,additional:[]},global:fixture.active,chat:null}},loadBook:async name=>{STATE.currentBookName=name;const {UI}=await import('./ui.js');UI.renderBookSelector();UI.renderList();await UI.renderRegexEditor();}};`,
  };
  await page.route('http://wbr.test/**', async route=>{
    const path=new URL(route.request().url()).pathname;
+   if(path==='/api/worldinfo/edit') {
+    const {name,data}=route.request().postDataJSON();
+    await page.evaluate(({name,data})=>{fixture.books[name]=data},{name,data});
+    return route.fulfill({json:{ok:true}});
+   }
    if(mocks[path]) return route.fulfill({contentType:'text/javascript',body:mocks[path]});
    if(path.startsWith(prefix)) {
     const file=root+path.slice(prefix.length);
     if(fs.existsSync(file))return route.fulfill({contentType:file.endsWith('.css')?'text/css':'text/javascript',body:fs.readFileSync(file)});
    }
-   await route.fulfill({contentType:'text/html',body:`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="${prefix}style.css"><style>body{background:#f7f5f2;color:#333;font-family:sans-serif;padding:14px;--SmartThemeBodyColor:#333;--SmartThemeBlurTintColor:#fff;--SmartThemeBorderColor:#ddd} .menu_button{padding:7px 10px;border:1px solid #ddd;border-radius:6px;background:white;color:inherit}button,input{font:inherit}</style><div id="regex_container"><div class="regex_settings"><div class="inline-drawer"><button id="native-toggle" onclick="document.querySelector('.inline-drawer-content').hidden=!document.querySelector('.inline-drawer-content').hidden">正则</button><div class="inline-drawer-content"><h4>全局正则</h4><div id="saved_regex_scripts"><div id="ordinary">普通全局正则</div></div></div></div></div></div><script>window.fixture={active:['娱乐圈'],books:{},events:{},settings:{regex:[{id:'ordinary',scriptName:'普通全局正则',findRegex:'/abc/g',replaceString:'xyz',placement:[2]}]},context:{chat:[],characters:[],loadWorldInfo:async name=>structuredClone(window.fixture.books[name]),saveSettingsDebounced:()=>{},saveWorldInfo:async(name,data)=>{window.fixture.books[name]=structuredClone(data)}}};window.toastr={error:(...args)=>console.error(...args),warning:console.warn};window.confirm=()=>true;</script>`});
+   await route.fulfill({contentType:'text/html',body:`<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="${prefix}style.css"><style>body{background:#f7f5f2;color:#333;font-family:sans-serif;padding:14px;--SmartThemeBodyColor:#333;--SmartThemeBlurTintColor:#fff;--SmartThemeBorderColor:#ddd} .menu_button{padding:7px 10px;border:1px solid #ddd;border-radius:6px;background:white;color:inherit}button,input{font:inherit}</style><div id="regex_container"><div class="regex_settings"><div class="inline-drawer"><button id="native-toggle" onclick="document.querySelector('.inline-drawer-content').hidden=!document.querySelector('.inline-drawer-content').hidden">正则</button><div class="inline-drawer-content"><h4>全局正则</h4><div id="saved_regex_scripts"><div id="ordinary">普通全局正则</div></div></div></div></div></div><script>window.fixture={active:['娱乐圈'],books:{},events:{},settings:{regex:[{id:'ordinary',scriptName:'普通全局正则',findRegex:'/abc/g',replaceString:'xyz',placement:[2]}]},context:{getRequestHeaders:()=>({}),chat:[],characters:[],loadWorldInfo:async name=>structuredClone(window.fixture.books[name]),saveSettingsDebounced:()=>{},saveWorldInfo:async(name,data)=>{window.fixture.books[name]=structuredClone(data)}}};window.toastr={error:(...args)=>console.error(...args),warning:console.warn};window.confirm=()=>true;</script>`});
  });
  await page.goto('http://wbr.test/');
  await page.evaluate(async prefix=>{
@@ -49,16 +55,29 @@ const assert = require('assert/strict');
  await modal.getByRole('button',{name:'保存',exact:true}).click();
  await page.waitForFunction(()=>fixture.books['娱乐圈'].extensions.kelaode_worldbook_regex.regexes[0].scriptName==='修改后的状态栏');
  await page.evaluate(()=>wbr.openManager('娱乐圈'));
- await page.getByRole('button',{name:'复制已有',exact:true}).click();
- await page.locator('dialog').last().locator('input[type=checkbox]').check();
- await page.getByRole('button',{name:'复制到世界书',exact:true}).click();
+ await page.evaluate(()=>{
+  for(let i=0;i<40;i++) fixture.settings.regex.push({id:'extra-'+i,scriptName:'长列表测试 '+i,findRegex:'x',placement:[2]});
+ });
+ await page.getByRole('button',{name:'移动已有',exact:true}).click();
+ const picker=page.locator('.wbr-picker');
+ assert.equal(await picker.locator('summary').count(),3);
+ assert.ok(await picker.locator('.wbr-picker-list').evaluate(el=>el.scrollHeight>el.clientHeight));
+ const confirmMove=picker.getByRole('button',{name:'移到世界书',exact:true});
+ const position=await confirmMove.boundingBox();
+ await picker.locator('.wbr-picker-list').evaluate(el=>el.scrollTop=el.scrollHeight);
+ assert.deepEqual(await confirmMove.boundingBox(),position);
+ await picker.getByRole('checkbox',{name:'普通全局正则',exact:true}).check();
+ await page.getByRole('button',{name:'移到世界书',exact:true}).click();
  await page.waitForFunction(()=>fixture.books['娱乐圈'].extensions.kelaode_worldbook_regex.regexes.length===2,{},{timeout:3000});
+ await picker.waitFor({state:'detached'});
+ assert.equal(await page.evaluate(()=>fixture.settings.regex.some(rule=>rule.id==='ordinary')),false);
+ await page.evaluate(()=>{fixture.settings.regex=fixture.settings.regex.filter(rule=>!rule.id.startsWith('extra-'))});
  await page.locator('dialog').getByRole('button',{name:'关闭',exact:true}).click();
  await page.evaluate(async()=>{fixture.active=['哨向'];await wbr.synchronize()});
  assert.match(await page.locator('#wbr-native-panel').textContent(),/哨向/);
  assert.doesNotMatch(await page.locator('#wbr-native-panel').textContent(),/娱乐圈/);
  await page.evaluate(async()=>{fixture.active=[];await wbr.synchronize()});
- assert.equal(await page.evaluate(()=>fixture.settings.regex.length),1);
+ assert.equal(await page.evaluate(()=>fixture.settings.regex.length),0);
  await page.locator('#wbr-native-panel > label input').uncheck();
  assert.equal(await page.evaluate(()=>fixture.settings.kelaode_worldbook_regex_enabled),false);
  await page.evaluate(async prefix=>{
@@ -127,6 +146,6 @@ const assert = require('assert/strict');
   assert.deepEqual(await page.evaluate(()=>fixture.active),['娱乐圈','主世界书'],'binding must not enable the destination');
  }
  assert.deepEqual(errors,[]);
- console.log('PASS mobile: hidden native copies, separate groups, editor save, copy existing, switch and disable, no page errors');
+ console.log('PASS mobile: hidden native copies, separate groups, editor save, scoped move and fixed footer, switch and disable, no page errors');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});
