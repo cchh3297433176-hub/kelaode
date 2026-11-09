@@ -6,6 +6,7 @@ import { API } from './api.js';
 import { Actions } from './actions.js';
 import { logger } from './logger.js';
 import { mountRegexManager } from './worldbook-regex.js';
+import { diceIcon, openRandomGroups } from './worldbook-random.js';
 
 export const UI = {
     // 防抖辅助函数
@@ -127,7 +128,7 @@ export const UI = {
                             <button class="wb-btn-circle" title="分析与统计" id="btn-wb-analysis"><i class="fa-solid fa-coins"></i></button>
                             <div class="wb-menu-dropdown" id="wb-analysis-menu">
                                 <div class="wb-menu-item" data-type="stats"><i class="fa-solid fa-chart-pie"></i> 世界书统计与分析</div>
-                                <div class="wb-menu-item" data-type="context"><i class="fa-solid fa-align-left"></i> 世界书实际上下文</div>
+                                <div class="wb-menu-item" data-type="context"><i class="fa-solid fa-align-left"></i> 世界书候选预览</div>
                                 <div class="wb-menu-item" data-type="export_txt"><i class="fa-solid fa-file-lines"></i> 导出世界书为TXT</div>
                             </div>
                         </div>
@@ -162,6 +163,7 @@ export const UI = {
                         <button class="wb-btn-circle interactable" id="btn-edit-lock" title="编辑锁：开启后编辑时不会自动重新排序"><i class="fa-solid fa-lock-open"></i></button>
                         <button class="wb-btn-circle interactable" id="btn-group-sort" title="分组排序管理"><i class="fa-solid fa-arrow-down-9-1"></i></button>
                         <button class="wb-btn-circle" id="btn-sort-priority" title="列表按优先级重排"><i class="fa-solid fa-filter"></i></button>
+                        <button type="button" class="wb-btn-circle interactable" id="btn-random-group" title="随机组" aria-label="随机组">${diceIcon}</button>
                         <button class="wb-btn-circle" id="btn-add-entry" title="新建条目"><i class="fa-solid fa-plus"></i></button>
                     </div>
                     <div class="wb-list" id="wb-entry-list"></div>
@@ -203,6 +205,7 @@ export const UI = {
         // ESC 快捷键：优先关闭子弹窗，如果没有子弹窗则关闭主面板
         const escHandler = (e) => {
             if (e.key === 'Escape') {
+                if (document.querySelector('.wb-random-dialog[open]')) return;
                 // 检查是否有子弹窗（模态框、弹窗、下拉菜单等）
                 const subOverlays = document.querySelectorAll('.wb-modal-overlay:not(.wb-main-panel-overlay), .wb-sort-modal-overlay, #wb-content-popup-overlay, #wb-active-dropdown, #wb-gr-tag-menu-overlay');
                 const openDropdowns = document.querySelectorAll('.wb-menu-dropdown.show, .wb-gr-dropdown.show');
@@ -235,6 +238,24 @@ export const UI = {
         }));
         this.bindSearchInput($('#wb-search-entry'), (val) => this.renderList(val));
         $('#btn-add-entry').onclick = () => Actions.addNewEntry();
+        const randomGroupButton = $('#btn-random-group');
+        randomGroupButton.onclick = async () => {
+            const name = STATE.currentBookName;
+            if (!name) return toastr.warning('请先选择一本世界书');
+            randomGroupButton.disabled = true;
+            try {
+                await Actions.flushPendingSave();
+                const entries = await API.loadBook(name);
+                if (STATE.currentBookName !== name || !panel.isConnected) return;
+                openRandomGroups(name, entries, this.bindSearchInput.bind(this), () => {
+                    toastr.success('随机组已保存');
+                });
+            } catch (error) {
+                toastr.error(error.message, '随机组');
+            } finally {
+                randomGroupButton.disabled = false;
+            }
+        };
         $('#btn-filter-enabled').onclick = (e) => {
             STATE.showOnlyEnabled = !STATE.showOnlyEnabled;
             e.currentTarget.classList.toggle('active', STATE.showOnlyEnabled);
@@ -2362,11 +2383,11 @@ export const UI = {
             };
 
             if (activatedEntries.length === 0) {
-                sidebarHtml = `<div style="padding:20px 15px;color:#9ca3af;text-align:center;font-size:0.9em;">无激活条目</div>`;
+                sidebarHtml = `<div style="padding:20px 15px;color:#9ca3af;text-align:center;font-size:0.9em;">没有候选条目</div>`;
                 contentHtml = `
                     <div style="display:flex;height:100%;align-items:center;justify-content:center;color:#9ca3af;flex-direction:column">
                         <i class="fa-solid fa-ghost" style="font-size:3em;margin-bottom:15px;opacity:0.5"></i>
-                        <div>当前上下文未激活任何条目</div>
+                        <div>当前预览没有候选条目</div>
                     </div>`;
             } else {
                 activatedEntries.forEach((entry, idx) => {
@@ -2415,7 +2436,7 @@ export const UI = {
                     <div class="wb-sort-header" style="padding:10px 20px; height:60px;">
                         <span style="font-size:1.1em; font-weight:bold; color:#111827; display:flex; align-items:center; gap:15px;">
                             <i class="fa-solid fa-align-left" id="wb-ctx-toggle-sidebar" style="cursor:pointer; color:#6b7280; transition:0.2s" title="切换侧边栏"></i>
-                            <span class="wb-ctx-header-title-text">实际上下文预览</span>
+                            <span class="wb-ctx-header-title-text">候选预览</span>
                         </span>
                         <div style="display:flex; align-items:center;">
                             <div class="wb-ctx-search-container">
@@ -2431,6 +2452,7 @@ export const UI = {
                             <div class="wb-close-btn" style="cursor:pointer; color:#9ca3af; font-size:1.2em; padding:5px; margin-left:10px;"><i class="fa-solid fa-xmark"></i></div>
                         </div>
                     </div>
+                    <div class="wb-ctx-preview-note">包含组会在实际生成时抽签。这里显示候选条目。</div>
                     <div class="wb-ctx-layout-container">
                         <div class="wb-ctx-sidebar-panel ${isSidebarCollapsed ? 'collapsed' : ''}" id="wb-ctx-sidebar">${sidebarHtml}</div>
                         <div class="wb-ctx-viewer-panel" id="wb-ctx-viewer">${contentHtml}</div>

@@ -3831,3 +3831,56 @@ body[data-theme="dark"] #enhanced-wb-panel-v6 #wb-manage-content.mode-custom .wb
 .wbr-picker-list { min-height: 0; overflow-y: auto; overflow-wrap: anywhere; }
 .wbr-picker-footer { display: flex; justify-content: flex-end; flex: none; padding-top: 10px; }
 .wbr-picker-footer button { width: auto; max-width: 100%; white-space: nowrap; }
+
+#enhanced-wb-panel-v6 #btn-random-group { flex: none; }
+#enhanced-wb-panel-v6 #wb-search-entry { min-width: 96px; }
+.wb-random-dialog {
+    --wb-random-line: #e5e7eb;
+    --wb-random-fill: #f8fafc;
+    --wb-random-accent: #4c3878;
+    --wb-random-action: #eee8f7;
+    width: min(520px, 94vw);
+    height: min(640px, 86dvh);
+    background: #fff;
+    color: #374151;
+    border-color: var(--wb-random-line);
+    gap: 8px;
+}
+body[data-theme="dark"] .wb-random-dialog {
+    --wb-random-line: #454550;
+    --wb-random-fill: #2e2e38;
+    --wb-random-accent: #ebe1ff;
+    --wb-random-action: #4b3b67;
+    background: #252530;
+    color: #e5e7eb;
+}
+.wb-random-dialog .wbr-toolbar { margin-bottom: 0; }
+.wb-random-dialog .wbr-toolbar strong { display: flex; align-items: center; gap: 8px; }
+.wb-random-dialog > :is(select, input) {
+    flex: none;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 8px 10px;
+    min-height: 38px;
+    border: 1px solid var(--wb-random-line);
+    border-radius: 8px;
+    background: var(--wb-random-fill);
+    color: inherit;
+    font: inherit;
+}
+.wb-random-list { flex: 1; }
+.wb-random-list .wb-random-row {
+    padding: 8px;
+    min-height: 44px;
+    border-bottom: 1px solid var(--wb-random-line);
+    cursor: pointer;
+}
+.wb-random-row:has(input:disabled) { cursor: default; opacity: .65; }
+.wb-random-row small { display: block; opacity: .75; }
+.wb-random-footer { flex: none; border-top: 1px solid var(--wb-random-line); padding-top: 8px; }
+.wb-random-footer p { margin: 0; font-size: .9em; overflow-wrap: anywhere; }
+.wb-random-footer .wbr-picker-footer { gap: 8px; }
+.wb-random-dialog .menu_button { min-height: 34px; }
+.wb-random-dialog .wb-random-confirm { background: var(--wb-random-action); color: var(--wb-random-accent); }
+.wb-ctx-preview-note { padding: 6px 12px; font-size: .85em; opacity: .75; }

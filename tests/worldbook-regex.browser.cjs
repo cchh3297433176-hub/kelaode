@@ -13,13 +13,14 @@ const assert = require('assert/strict');
  '/scripts/world-info.js':`export const worldInfoCache=new Map();`,
  '/scripts/power-user.js':`export const power_user={};`,
  '/scripts/extensions/regex/engine.js':`export const SCRIPT_TYPES={GLOBAL:'global',SCOPED:'scoped',PRESET:'preset'}; export const getScriptsByType=type=>type==='global'?fixture.settings.regex:[]; export const saveScriptsByType=async scripts=>{fixture.settings.regex=scripts}; export const getCurrentPresetAPI=()=>null; export const getCurrentPresetName=()=>null;`,
- [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null};`,
+ [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null,loadBook:async name=>Object.values((await fixture.context.loadWorldInfo(name)).entries)};`,
  [prefix+'actions.js']:`import {STATE} from './state.js'; export const Actions={flushPendingSave:async()=>{},applyTheme:()=>{},switchView:()=>{},getTokenCount:()=>0,refreshAllContext:async()=>{STATE.allBookNames=Object.keys(fixture.books);STATE.bindings={char:{primary:null,additional:[]},global:fixture.active,chat:null}},loadBook:async name=>{STATE.currentBookName=name;const {UI}=await import('./ui.js');UI.renderBookSelector();UI.renderList();await UI.renderRegexEditor();}};`,
  };
  await page.route('http://wbr.test/**', async route=>{
    const path=new URL(route.request().url()).pathname;
    if(path==='/api/worldinfo/edit') {
     const {name,data}=route.request().postDataJSON();
+    if(await page.evaluate(()=>fixture.rejectSave)) return route.fulfill({status:503});
     await page.evaluate(({name,data})=>{fixture.books[name]=data},{name,data});
     return route.fulfill({json:{ok:true}});
    }
@@ -102,6 +103,62 @@ const assert = require('assert/strict');
  await page.getByRole('tab',{name:'条目',exact:true}).click();
  assert.equal(await page.locator('#wb-entry-editor').isVisible(),true);
 
+ await page.evaluate(async prefix=>{
+  const {STATE}=await import(prefix+'state.js');
+  window.toastr.success=()=>{};
+  fixture.randomBook=STATE.currentBookName;
+  fixture.books[fixture.randomBook]={
+   extensions:{test:'保留'},
+   entries:{
+    0:{uid:0,comment:'常驻总控',constant:true,content:'格式'},
+    1:{uid:1,comment:'01 论坛',constant:false,key:['论坛'],content:'题材一'},
+    2:{uid:2,comment:'02 新闻',constant:false,key:['新闻'],content:'题材二'},
+    3:{uid:3,comment:'其他组',constant:false,group:'原组',content:'不改'},
+   },
+  };
+ },prefix);
+ const randomButton=page.getByRole('button',{name:'随机组',exact:true});
+ assert.equal(await randomButton.locator('svg').count(),1);
+ const randomBounds=await randomButton.boundingBox();
+ assert.ok(randomBounds && randomBounds.x>=0 && randomBounds.x+randomBounds.width<=390);
+ await randomButton.click();
+ const random=page.getByRole('dialog',{name:'随机组'});
+ assert.ok(await random.getByRole('checkbox',{name:/其他组/}).isDisabled());
+ await random.getByRole('checkbox',{name:'01 论坛'}).check();
+ await random.getByRole('searchbox').fill('新闻');
+ await random.getByRole('checkbox',{name:'02 新闻'}).check();
+ assert.match(await random.locator('[data-status]').textContent(),/已选 2 条.*等概率/);
+ await random.getByRole('button',{name:'试抽'}).click();
+ assert.match(await random.locator('[data-status]').textContent(),/试抽到「0[12]/);
+ await page.evaluate(()=>fixture.rejectSave=true);
+ await random.getByRole('button',{name:'创建随机组'}).click();
+ await random.getByText(/HTTP 503/).waitFor();
+ assert.equal(await page.evaluate(()=>fixture.books[fixture.randomBook].entries[1].constant),false);
+ await page.evaluate(()=>fixture.rejectSave=false);
+ await random.getByRole('button',{name:'创建随机组'}).click();
+ await random.waitFor({state:'detached'});
+ const savedGroup=await page.evaluate(()=>fixture.books[fixture.randomBook]);
+ assert.equal(savedGroup.extensions.test,'保留');
+ assert.equal(savedGroup.entries[0].group,undefined);
+ assert.equal(savedGroup.entries[3].group,'原组');
+ assert.equal(savedGroup.entries[1].constant,true);
+ assert.equal(savedGroup.entries[1].groupWeight,100);
+ assert.equal(savedGroup.entries[1].group,savedGroup.entries[2].group);
+ assert.deepEqual(savedGroup.entries[1].key,['论坛']);
+ assert.equal(savedGroup.entries[1].content,'题材一');
+ await randomButton.click();
+ await random.getByRole('combobox').selectOption(savedGroup.entries[1].group);
+ await random.getByRole('checkbox',{name:'01 论坛'}).uncheck();
+ assert.match(await random.locator('[data-status]').textContent(),/移出并停用 1 条/);
+ await random.getByRole('button',{name:'保存随机组'}).click();
+ await random.waitFor({state:'detached'});
+ assert.equal(await page.evaluate(()=>fixture.books[fixture.randomBook].entries[1].disable),true);
+ await randomButton.click();
+ await random.waitFor();
+ await page.keyboard.press('Escape');
+ await random.waitFor({state:'detached'});
+ assert.ok(await randomButton.isVisible());
+
  if(process.env.XUBAI_STATUSBAR_REPO_PATH) {
   await page.locator('#wb-close').dispatchEvent('click');
   const generatorRoot=process.env.XUBAI_STATUSBAR_REPO_PATH;
@@ -146,6 +203,6 @@ const assert = require('assert/strict');
   assert.deepEqual(await page.evaluate(()=>fixture.active),['娱乐圈','主世界书'],'binding must not enable the destination');
  }
  assert.deepEqual(errors,[]);
- console.log('PASS mobile: hidden native copies, separate groups, editor save, scoped move and fixed footer, switch and disable, no page errors');
+ console.log('PASS mobile: regex management, random group creation/editing, failed save and retry, no page errors');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});
