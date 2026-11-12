@@ -4,10 +4,12 @@ import { API } from './api.js';
 import { effectiveWorldbookNames, writeBookControl } from './worldbook-chat.js';
 import { getBoundWorldbooks, synchronize } from './worldbook-regex.js';
 import { openWorldbookSnapshots } from './worldbook-snapshots.js';
+import { mountWorldbookBall } from './worldbook-ball.js';
 
 const SETTINGS_KEY = 'kelaode_worldbook_quick';
 const IMAGE_STORE = 'images';
 let widget;
+let refreshBallPosition;
 let asset;
 let imageUrl;
 let imageRevision = 0;
@@ -66,6 +68,7 @@ function refreshAppearance() {
         widget.hidden = !visible || !getContext().chatId;
         if (widget.hidden) closeMenu();
         widget.style.setProperty('--wb-quick-size', `${size}px`);
+        refreshBallPosition?.();
     }
     const summary = document.getElementById('wb-quick-settings-state');
     if (summary) summary.textContent = worldbookQuickSummary();
@@ -162,7 +165,7 @@ export function initWorldbookQuick() {
         </div>
         <button type="button" class="wb-quick-ball" data-ball aria-label="世界书悬浮球" aria-controls="wb-quick-menu" aria-expanded="false">
             <i class="fa-solid fa-book-open" data-ball-default aria-hidden="true"></i>
-            <img alt="" data-ball-image hidden>
+            <img alt="" draggable="false" data-ball-image hidden>
         </button>`;
     const ball = widget.querySelector('[data-ball]');
     const menu = widget.querySelector('[data-quick-menu]');
@@ -177,9 +180,7 @@ export function initWorldbookQuick() {
         openWorldbookQuickSettings().catch(error => toastr.error(error.message, '悬浮球设置'));
     };
     shell.append(widget);
-    const align = () => widget.style.setProperty('--wb-quick-composer', `${composer.getBoundingClientRect().height}px`);
-    new ResizeObserver(align).observe(composer);
-    align();
+    refreshBallPosition = mountWorldbookBall({ widget, ball, menu, shell, composer, closeMenu });
     document.addEventListener('pointerdown', event => { if (!widget.contains(event.target)) closeMenu(); });
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && !menu.hidden) {

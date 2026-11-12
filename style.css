@@ -3935,8 +3935,7 @@ body[data-theme="dark"] :is(.wb-quick-widget, .wb-feature-dialog) {
 }
 .wb-quick-widget [hidden], .wb-quick-widget[hidden], .wb-feature-dialog [hidden] { display: none !important; }
 .wb-quick-widget {
-    position: absolute; z-index: 32; inset-inline-end: 12px;
-    bottom: calc(var(--wb-quick-composer, 52px) + 8px);
+    position: absolute; z-index: 32;
 }
 .wb-quick-ball {
     box-sizing: border-box; display: grid; place-items: center; flex: none;
@@ -3945,13 +3944,14 @@ body[data-theme="dark"] :is(.wb-quick-widget, .wb-feature-dialog) {
     background: var(--wb-feature-accent); color: var(--wb-feature-on-accent);
     font-size: calc(var(--wb-quick-size) * .4); box-shadow: 0 4px 14px #0002;
 }
-button.wb-quick-ball { cursor: pointer; }
+button.wb-quick-ball { cursor: grab; touch-action: none; user-select: none; }
+button.wb-quick-ball.is-dragging { cursor: grabbing; }
+button.wb-quick-ball > * { pointer-events: none; }
 .wb-quick-ball:has(img:not([hidden])) { background: var(--wb-feature-surface); }
 .wb-quick-ball img { width: 100%; height: 100%; min-width: 0; min-height: 0; object-fit: contain; }
 .wb-quick-popover {
-    box-sizing: border-box; position: absolute; inset-inline-end: 0; bottom: calc(100% + 9px);
-    width: min(288px, calc(100dvw - 28px)); display: flex; flex-direction: column;
-    max-height: min(380px, 56dvh); overflow: hidden;
+    box-sizing: border-box; position: absolute;
+    display: flex; flex-direction: column; overflow: hidden;
     border: 1px solid var(--wb-feature-line); border-radius: 13px;
     background: var(--wb-feature-surface); box-shadow: 0 8px 24px #0003;
 }
