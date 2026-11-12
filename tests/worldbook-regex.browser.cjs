@@ -10,7 +10,7 @@ const assert = require('assert/strict');
  const mocks={
  '/scripts/extensions.js':`export const extension_settings=window.fixture.settings; export const getContext=()=>window.fixture.context;`,
  '/script.js':`export const event_types={CHAT_CHANGED:'chat',WORLDINFO_SETTINGS_UPDATED:'world',WORLDINFO_UPDATED:'updated',GENERATION_AFTER_COMMANDS:'generation'}; export const eventSource={emit:async()=>{},on:(name,fn)=>(window.fixture.events[name]??=[]).push(fn)}; export function updateMessageBlock(){}`,
- '/scripts/world-info.js':`export const worldInfoCache=new Map();`,
+ '/scripts/world-info.js':`export const worldInfoCache=new Map(); export const world_names=['A','B'];`,
  '/scripts/power-user.js':`export const power_user={};`,
  '/scripts/extensions/regex/engine.js':`export const SCRIPT_TYPES={GLOBAL:'global',SCOPED:'scoped',PRESET:'preset'}; export const getScriptsByType=type=>type==='global'?fixture.settings.regex:[]; export const saveScriptsByType=async scripts=>{fixture.settings.regex=scripts}; export const getCurrentPresetAPI=()=>null; export const getCurrentPresetName=()=>null;`,
  [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null,loadBook:async name=>Object.values((await fixture.context.loadWorldInfo(name)).entries)};`,

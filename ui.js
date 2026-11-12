@@ -7,6 +7,8 @@ import { Actions } from './actions.js';
 import { logger } from './logger.js';
 import { mountRegexManager } from './worldbook-regex.js';
 import { diceIcon, openRandomGroups } from './worldbook-random.js';
+import { openWorldbookQuickSettings, worldbookQuickSummary } from './worldbook-quick.js';
+import { openWorldbookSnapshots } from './worldbook-snapshots.js';
 
 export const UI = {
     // 防抖辅助函数
@@ -151,6 +153,7 @@ export const UI = {
                     </div>
                     <div id="wb-entry-editor" role="tabpanel" aria-labelledby="wb-tab-entries" class="wb-editor-pane">
                     <div class="wb-stat-line">
+                        <button type="button" class="wb-feature-link" id="btn-wb-snapshots"><i class="fa-solid fa-layer-group" aria-hidden="true"></i> 条目快照</button>
                         <div class="wb-stat-group">
                             <div id="wb-warning-stat" class="wb-warning-badge hidden" title="点击查看问题条目"><i class="fa-solid fa-circle-exclamation"></i> <span id="wb-warning-count">0</span></div>
                             <div id="wb-exclude-recursion-stat" class="wb-exclude-recursion-badge hidden" title="点击查看未设不可递归的条目"><i class="fa-solid fa-triangle-exclamation"></i> <span id="wb-exclude-recursion-count">0</span></div>
@@ -193,6 +196,9 @@ export const UI = {
                             </div>
                         </div>
                         <div class="wb-manage-content" id="wb-manage-content"></div>
+                        <button type="button" class="wb-feature-link wb-quick-settings-entry" id="btn-wb-quick-settings">
+                            <i class="fa-solid fa-gear" aria-hidden="true"></i><span>悬浮球设置</span><small id="wb-quick-settings-state"></small><i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -205,7 +211,7 @@ export const UI = {
         // ESC 快捷键：优先关闭子弹窗，如果没有子弹窗则关闭主面板
         const escHandler = (e) => {
             if (e.key === 'Escape') {
-                if (document.querySelector('.wb-random-dialog[open]')) return;
+                if (document.querySelector('.wb-random-dialog[open], .wb-feature-dialog[open]')) return;
                 // 检查是否有子弹窗（模态框、弹窗、下拉菜单等）
                 const subOverlays = document.querySelectorAll('.wb-modal-overlay:not(.wb-main-panel-overlay), .wb-sort-modal-overlay, #wb-content-popup-overlay, #wb-active-dropdown, #wb-gr-tag-menu-overlay');
                 const openDropdowns = document.querySelectorAll('.wb-menu-dropdown.show, .wb-gr-dropdown.show');
@@ -238,6 +244,23 @@ export const UI = {
         }));
         this.bindSearchInput($('#wb-search-entry'), (val) => this.renderList(val));
         $('#btn-add-entry').onclick = () => Actions.addNewEntry();
+        const snapshotButton = $('#btn-wb-snapshots');
+        snapshotButton.onclick = async () => {
+            const name = STATE.currentBookName;
+            if (!name) return toastr.warning('请先选择一本世界书');
+            snapshotButton.disabled = true;
+            try {
+                await Actions.flushPendingSave();
+                if (STATE.currentBookName === name && panel.isConnected) await openWorldbookSnapshots(name);
+            } catch (error) {
+                toastr.error(error.message, '条目快照');
+            } finally {
+                snapshotButton.disabled = false;
+            }
+        };
+        $('#wb-quick-settings-state').textContent = worldbookQuickSummary();
+        $('#btn-wb-quick-settings').onclick = () => openWorldbookQuickSettings()
+            .catch(error => toastr.error(error.message, '悬浮球设置'));
         const randomGroupButton = $('#btn-random-group');
         randomGroupButton.onclick = async () => {
             const name = STATE.currentBookName;
@@ -245,9 +268,10 @@ export const UI = {
             randomGroupButton.disabled = true;
             try {
                 await Actions.flushPendingSave();
-                const entries = await API.loadBook(name);
+                const book = await getContext().loadWorldInfo(name);
                 if (STATE.currentBookName !== name || !panel.isConnected) return;
-                openRandomGroups(name, entries, this.bindSearchInput.bind(this), () => {
+                if (!book) throw new Error('世界书不存在');
+                openRandomGroups(name, book, this.bindSearchInput.bind(this), () => {
                     toastr.success('随机组已保存');
                 });
             } catch (error) {

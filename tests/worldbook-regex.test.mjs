@@ -54,7 +54,7 @@ test('invalid files fail before overwrite, old entry-only books remain compatibl
 });
 
 async function runtime() {
-    const state = { globals: ['A'], character: { primary: 'A', additional: ['A'] }, chat: 'A', books: {
+    const state = { globals: ['A'], character: { primary: 'A', additional: ['A'] }, chat: 'A', metadata: {}, books: {
         A: core.writeBundle({ entries: {} }, [rule()]), B: core.writeBundle({ entries: {} }, [rule({ id: 'r2' })]),
     }, settings: { regex: [{ id: 'user', scriptName: 'untouched' }, ...core.runtimeCopies('stale', [rule()])] }, persona: {}, waits: {} };
     const context = vm.createContext({ console, structuredClone, crypto, setTimeout, clearTimeout, queueMicrotask,
@@ -65,11 +65,12 @@ async function runtime() {
         },
         document: { getElementById: () => null, querySelectorAll: () => [] }, toastr: { error() {} } });
     const coreModule = new vm.SourceTextModule(coreSource, { context });
-    const ctx = { getRequestHeaders: () => ({}), saveWorldInfo: async (name, book) => { state.books[name] = structuredClone(book); }, loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
+    const chatModule = new vm.SourceTextModule(await readFile(new URL('../worldbook-chat.js', import.meta.url), 'utf8'), { context });
+    const ctx = { get chatMetadata() { return state.metadata; }, getRequestHeaders: () => ({}), saveWorldInfo: async (name, book) => { state.books[name] = structuredClone(book); }, loadWorldInfo: async name => { if (state.waits[name]) await state.waits[name]; return state.books[name]; } };
     const bindings = {
         '../../../extensions.js': { getContext: () => ctx, extension_settings: state.settings },
         '../../../../script.js': { eventSource: { on() {}, async emit() {} }, event_types: {}, updateMessageBlock() {} },
-        '../../../world-info.js': { worldInfoCache: new Map() },
+        '../../../world-info.js': { worldInfoCache: new Map(), world_names: Object.keys(state.books) },
         '../../../power-user.js': { power_user: state.persona },
         '../../regex/engine.js': { SCRIPT_TYPES: { GLOBAL: 'global', SCOPED: 'scoped', PRESET: 'preset' }, getScriptsByType: () => state.settings.regex, saveScriptsByType() {}, getCurrentPresetAPI() {}, getCurrentPresetName() {} },
         './api.js': { API: { getAllBookNames: async () => Object.keys(state.books), getGlobalBindings: async () => state.globals, getCharBindings: async () => state.character, getChatBinding: async () => state.chat } },
@@ -80,7 +81,9 @@ async function runtime() {
         for (const [key, value] of Object.entries(exports)) this.setExport(key, value);
     }, { context }));
     const module = new vm.SourceTextModule(await readFile(new URL('../worldbook-regex.js', import.meta.url), 'utf8'), { context });
-    await module.link(specifier => specifier === './worldbook-regex-core.js' ? coreModule : modules.get(specifier));
+    modules.set('./worldbook-regex-core.js', coreModule);
+    modules.set('./worldbook-chat.js', chatModule);
+    await module.link(specifier => modules.get(specifier));
     await module.evaluate();
     return { state, sync: module.namespace.synchronize, bind: module.namespace.bindGeneratedRegexes, listTargets: module.namespace.listBindingTargets };
 }
@@ -125,6 +128,16 @@ test('persona book participates in reconciliation', async () => {
     const { state, sync } = await runtime();
     state.persona.persona_description_lorebook = 'B'; await sync();
     assert.equal(state.settings.regex.filter(core.isManaged).length, 2);
+});
+
+test('quick overrides pause and load bundled regexes only in the selected chat', async () => {
+    const { state, sync } = await runtime();
+    state.metadata = { kelaode_worldbook_controls: [{ name: 'A', enabled: false }, { name: 'B', enabled: true }] };
+    await sync();
+    assert.deepEqual(Array.from(state.settings.regex.filter(core.isManaged), rule => rule[core.OWNER_KEY].book), ['B']);
+    state.metadata = {};
+    await sync();
+    assert.deepEqual(Array.from(state.settings.regex.filter(core.isManaged), rule => rule[core.OWNER_KEY].book), ['A']);
 });
 
 test('pausing linkage clears runtime copies while preserving portable originals', async () => {

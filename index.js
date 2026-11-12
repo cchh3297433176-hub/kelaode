@@ -2,11 +2,14 @@
 
 import { event_types, eventSource } from '../../../../script.js';
 import { world_names } from '../../../world-info.js';
+import { getContext } from '../../../extensions.js';
 import { CONFIG } from './state.js';
 import { Actions } from './actions.js';
 import { UI } from './ui.js';
 import { logger } from './logger.js';
 import { initWorldbookRegex } from './worldbook-regex.js';
+import { applyWorldbookRuntime } from './worldbook-random.js';
+import { initWorldbookQuick } from './worldbook-quick.js';
 
 jQuery(async () => {
 
@@ -39,10 +42,16 @@ jQuery(async () => {
 
     injectButton();
 
+    if (event_types.WORLDINFO_ENTRIES_LOADED) {
+        eventSource.on(event_types.WORLDINFO_ENTRIES_LOADED, lore => applyWorldbookRuntime(lore, getContext(), world_names)
+            .catch(error => logger.error('Worldbook runtime update failed:', error)));
+    }
+
     const performInit = async () => {
         try {
             await initWorldbookRegex().catch(error => logger.error('Worldbook regex initialization failed:', error));
             await Actions.init();
+            initWorldbookQuick();
             logger.info("Pre-loading complete.");
         } catch (e) {
             logger.error("Pre-loading failed:", e);

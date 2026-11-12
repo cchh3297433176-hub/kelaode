@@ -1,10 +1,11 @@
 import { getContext, extension_settings } from '../../../extensions.js';
 import { eventSource, event_types, updateMessageBlock } from '../../../../script.js';
-import { worldInfoCache } from '../../../world-info.js';
+import { worldInfoCache, world_names } from '../../../world-info.js';
 import { power_user } from '../../../power-user.js';
 import { SCRIPT_TYPES, getScriptsByType, saveScriptsByType, getCurrentPresetAPI, getCurrentPresetName } from '../../regex/engine.js';
 import { API } from './api.js';
 import { STATE } from './state.js';
+import { effectiveWorldbookNames } from './worldbook-chat.js';
 import { readBundle, writeBundle, normalizeRegex, parseRegexImport, isManaged, runtimeCopies, replaceManaged, createRegexId } from './worldbook-regex-core.js';
 
 let revision = 0;
@@ -24,7 +25,7 @@ function report(error) {
     toastr.error(error.message, '世界书正则');
 }
 
-async function activeBooks() {
+export async function getBoundWorldbooks() {
     const [global, character, chat] = await Promise.all([API.getGlobalBindings(), API.getCharBindings(), API.getChatBinding()]);
     return [...new Set([...global, character.primary, ...character.additional, chat, power_user.persona_description_lorebook].filter(Boolean))];
 }
@@ -39,7 +40,8 @@ export async function synchronize() {
     const token = ++revision;
     // Clear synchronously: a slow previous-chat read must never leak into a new chat.
     clearCopies();
-    const names = extension_settings[ENABLED_KEY] === false ? [] : await activeBooks();
+    const names = extension_settings[ENABLED_KEY] === false ? []
+        : effectiveWorldbookNames(await getBoundWorldbooks(), getContext().chatMetadata, world_names);
     const next = new Map();
     const copies = [];
     for (const name of names) {
