@@ -14,6 +14,7 @@ let asset;
 let imageUrl;
 let imageRevision = 0;
 let menuRevision = 0;
+let redrawMenu;
 
 function settings() {
     const saved = extension_settings[SETTINGS_KEY];
@@ -92,51 +93,127 @@ function refreshAppearance() {
 function closeMenu() {
     if (!widget) return;
     menuRevision++;
+    redrawMenu = undefined;
     widget.querySelector('[data-quick-menu]').hidden = true;
     widget.querySelector('[data-ball]').setAttribute('aria-expanded', 'false');
 }
 
-async function renderMenu() {
+function createSwitch(label, checked, onChange) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'wb-quick-switch';
+    button.setAttribute('role', 'switch');
+    button.setAttribute('aria-label', label);
+    button.innerHTML = '<span class="wb-quick-switch-track" aria-hidden="true"><span class="wb-quick-switch-thumb"></span><span class="wb-quick-switch-state"></span></span>';
+    const state = button.querySelector('.wb-quick-switch-state');
+    const paint = () => {
+        button.setAttribute('aria-checked', String(checked));
+        state.textContent = checked ? '开' : '关';
+    };
+    paint();
+    button.onclick = () => {
+        if (onChange(!checked) === false) return;
+        checked = !checked;
+        paint();
+    };
+    return button;
+}
+
+function createBookFilters(onChange) {
+    const element = document.createElement('div');
+    element.className = 'wb-quick-filters';
+    element.innerHTML = `
+        <select aria-label="按标签筛选"></select>
+        <button type="button" aria-pressed="false">显示主书</button>`;
+    const [select, primaryButton] = element.children;
+    let tag = '';
+    let showPrimary = false;
+    let books = [];
+
+    select.onchange = () => {
+        tag = select.value;
+        onChange();
+    };
+    primaryButton.onclick = () => {
+        showPrimary = !showPrimary;
+        primaryButton.setAttribute('aria-pressed', String(showPrimary));
+        onChange();
+    };
+
+    return {
+        element,
+        reset() {
+            tag = select.value = '';
+            showPrimary = false;
+            primaryButton.setAttribute('aria-pressed', 'false');
+        },
+        update(names, bindings, currentPrimary) {
+            const metadata = API.getMetadata();
+            books = names.map(name => ({
+                name,
+                tags: Array.isArray(metadata[name]?.tags) ? metadata[name].tags.filter(value => typeof value === 'string' && value) : [],
+                primary: name === currentPrimary || Boolean(bindings[name]?.primary?.length),
+            }));
+            const tags = [...new Set(books.flatMap(book => book.tags))].sort((a, b) => a.localeCompare(b));
+            if (!tags.includes(tag)) tag = '';
+            select.replaceChildren(new Option('全部标签', ''), ...tags.map(value => new Option(value, value)));
+            select.value = tag;
+            select.hidden = !tags.length;
+            primaryButton.hidden = !books.some(book => book.primary);
+            element.hidden = select.hidden && primaryButton.hidden;
+        },
+        visibleNames() {
+            return books.filter(book => (showPrimary || !book.primary) && (!tag || book.tags.includes(tag)))
+                .map(book => book.name);
+        },
+    };
+}
+
+async function renderMenu(filters) {
     const menu = widget.querySelector('[data-quick-menu]');
     if (menu.hidden) return;
     const revision = ++menuRevision;
+    const { chatId } = getContext();
+    const pinned = settings().pins;
+    const [bound, available, bindings, character] = await Promise.all([
+        getBoundWorldbooks(), API.getAllBookNames(), pinned.length ? API.getAllBoundBookNames() : {}, API.getCharBindings(),
+    ]);
     const context = getContext();
-    const [bound, available] = await Promise.all([getBoundWorldbooks(), API.getAllBookNames()]);
-    if (revision !== menuRevision || context.chatId !== getContext().chatId) return;
-    const pins = settings().pins.filter(name => available.includes(name));
+    if (revision !== menuRevision || chatId !== context.chatId) return;
+    const pins = pinned.filter(name => available.includes(name));
     const effective = new Set(effectiveWorldbookNames(bound, context.chatMetadata, available));
+    filters.update(pins, bindings, character.primary);
     const list = menu.querySelector('[data-quick-list]');
+    redrawMenu = () => renderBookRows(list, filters.visibleNames(), pins.length, effective, bound, chatId);
+    redrawMenu();
+}
+
+function renderBookRows(list, names, pinCount, effective, bound, chatId) {
     list.replaceChildren();
-    if (!pins.length) {
-        list.textContent = '在设置中添加常用世界书';
+    if (!names.length) {
+        list.textContent = pinCount ? '没有符合筛选条件的快捷世界书' : '在设置中添加常用世界书';
         return;
     }
-    for (const name of pins) {
+    for (const name of names) {
         const row = document.createElement('div');
         row.className = 'wb-quick-row';
-        const label = document.createElement('label');
         const title = document.createElement('span');
+        title.className = 'wb-quick-name';
         title.textContent = name;
-        const toggle = document.createElement('input');
-        toggle.type = 'checkbox';
-        toggle.className = 'wb-feature-switch';
-        toggle.setAttribute('role', 'switch');
-        toggle.checked = effective.has(name);
-        toggle.onchange = async () => {
-            const enabled = toggle.checked;
+        const toggle = createSwitch(name, effective.has(name), enabled => {
             try {
-                writeBookControl(getContext(), context.chatId, name, { enabled: bound.includes(name) === enabled ? undefined : enabled });
+                writeBookControl(getContext(), chatId, name, { enabled: bound.includes(name) === enabled ? undefined : enabled });
             } catch (error) {
-                toggle.checked = !enabled;
                 toastr.error(error.message, '世界书');
-                return;
+                return false;
             }
-            await synchronize().catch(error => toastr.error(error.message, '世界书正则'));
-        };
-        label.append(title, toggle);
+            if (enabled) effective.add(name);
+            else effective.delete(name);
+            synchronize().catch(error => toastr.error(error.message, '世界书正则'));
+        });
         const snapshots = document.createElement('button');
         snapshots.type = 'button';
-        snapshots.className = 'menu_button wb-quick-icon';
+        snapshots.className = 'wb-quick-icon';
         snapshots.setAttribute('aria-label', `${name}的条目快照`);
         snapshots.title = '条目快照';
         snapshots.innerHTML = '<i class="fa-solid fa-layer-group" aria-hidden="true"></i>';
@@ -144,7 +221,7 @@ async function renderMenu() {
             closeMenu();
             openWorldbookSnapshots(name).catch(error => toastr.error(error.message, '条目快照'));
         };
-        row.append(label, snapshots);
+        row.append(title, toggle, snapshots);
         list.append(row);
     }
 }
@@ -159,7 +236,7 @@ export function initWorldbookQuick() {
         <div id="wb-quick-menu" class="wb-quick-popover" data-quick-menu hidden>
             <div class="wb-quick-head">
                 <div><strong>世界书</strong><small>仅当前聊天</small></div>
-                <button type="button" class="menu_button wb-quick-icon" data-settings aria-label="悬浮球设置" title="悬浮球设置"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
+                <button type="button" class="wb-quick-icon" data-settings aria-label="悬浮球设置" title="悬浮球设置"><i class="fa-solid fa-gear" aria-hidden="true"></i></button>
             </div>
             <div class="wb-quick-list" data-quick-list></div>
         </div>
@@ -169,11 +246,20 @@ export function initWorldbookQuick() {
         </button>`;
     const ball = widget.querySelector('[data-ball]');
     const menu = widget.querySelector('[data-quick-menu]');
+    const filters = createBookFilters(() => redrawMenu?.());
+    menu.querySelector('[data-quick-list]').before(filters.element);
+    const refreshMenu = () => renderMenu(filters).catch(error => {
+        if (!menu.hidden && !redrawMenu) menu.querySelector('[data-quick-list]').textContent = '无法读取快捷世界书';
+        toastr.error(error.message, '世界书');
+    });
     ball.onclick = () => {
         if (!menu.hidden) return closeMenu();
+        filters.reset();
+        filters.element.hidden = true;
+        menu.querySelector('[data-quick-list]').textContent = '正在读取…';
         menu.hidden = false;
         ball.setAttribute('aria-expanded', 'true');
-        renderMenu().catch(error => toastr.error(error.message, '世界书'));
+        refreshMenu();
     };
     widget.querySelector('[data-settings]').onclick = () => {
         closeMenu();
@@ -191,9 +277,7 @@ export function initWorldbookQuick() {
     for (const name of ['CHAT_CHANGED', 'CHARACTER_SELECTED']) {
         if (event_types[name]) eventSource.on(event_types[name], () => { closeMenu(); refreshAppearance(); });
     }
-    if (event_types.WORLDINFO_SETTINGS_UPDATED) eventSource.on(event_types.WORLDINFO_SETTINGS_UPDATED, () => {
-        renderMenu().catch(error => toastr.error(error.message, '世界书'));
-    });
+    if (event_types.WORLDINFO_SETTINGS_UPDATED) eventSource.on(event_types.WORLDINFO_SETTINGS_UPDATED, refreshMenu);
     refreshAppearance();
     const revision = imageRevision;
     imageTransaction('readonly', store => store.get('ball')).then(next => {
@@ -203,7 +287,9 @@ export function initWorldbookQuick() {
 
 export async function openWorldbookQuickSettings() {
     if (document.querySelector('.wb-quick-settings[open]')) return;
-    const names = await API.getAllBookNames();
+    const [names, bindings, character] = await Promise.all([
+        API.getAllBookNames(), API.getAllBoundBookNames(), API.getCharBindings(),
+    ]);
     if (document.querySelector('.wb-quick-settings[open]')) return;
     const dialog = document.createElement('dialog');
     dialog.className = 'wbr-dialog wbr-picker wb-feature-dialog wb-quick-settings';
@@ -213,7 +299,7 @@ export async function openWorldbookQuickSettings() {
             <strong id="wb-quick-settings-title">悬浮球设置</strong>
             <button type="button" class="menu_button" data-close>完成</button>
         </div>
-        <label class="wb-feature-line">显示悬浮球<input type="checkbox" class="wb-feature-switch" role="switch" data-visible></label>
+        <div class="wb-feature-line" data-visible>显示悬浮球</div>
         <div class="wb-quick-image">
             <span class="wb-quick-ball" aria-hidden="true"><i class="fa-solid fa-book-open" data-ball-default></i><img alt="" data-ball-image hidden></span>
             <div>
@@ -241,9 +327,8 @@ export async function openWorldbookQuickSettings() {
     const pins = find('pins');
     let busy = false;
     const current = settings();
-    visible.checked = current.visible;
+    visible.append(createSwitch('显示悬浮球', current.visible, value => updateSettings({ visible: value })));
     size.value = String(current.size);
-    visible.onchange = () => updateSettings({ visible: visible.checked });
     size.oninput = () => updateSettings({ size: size.valueAsNumber });
     choose.onclick = () => file.click();
     async function changeImage(next) {
@@ -280,24 +365,27 @@ export async function openWorldbookQuickSettings() {
     };
     reset.onclick = () => void changeImage(undefined);
     const sorted = [...names].sort((left, right) => Number(current.pins.includes(right)) - Number(current.pins.includes(left)));
+    const filters = createBookFilters(renderPins);
+    filters.update(sorted, bindings, character.primary);
+    pins.before(filters.element);
     function renderPins() {
         const term = search.value.trim().toLocaleLowerCase();
         const pinned = new Set(settings().pins);
         pins.replaceChildren();
-        for (const name of sorted) {
+        for (const name of filters.visibleNames()) {
             if (term && !name.toLocaleLowerCase().includes(term)) continue;
-            const row = document.createElement('label');
+            const row = document.createElement('div');
             row.className = 'wbr-check wb-feature-row';
-            const input = document.createElement('input');
-            input.type = 'checkbox';
-            input.checked = pinned.has(name);
-            input.onchange = () => {
+            const toggle = createSwitch(name, pinned.has(name), enabled => {
                 const next = new Set(settings().pins);
-                if (input.checked) next.add(name);
+                if (enabled) next.add(name);
                 else next.delete(name);
                 updateSettings({ pins: [...next] });
-            };
-            row.append(input, document.createTextNode(name));
+            });
+            const title = document.createElement('span');
+            title.className = 'wb-quick-name';
+            title.textContent = name;
+            row.append(title, toggle);
             pins.append(row);
         }
         if (!pins.childElementCount) pins.textContent = '没有匹配的世界书';

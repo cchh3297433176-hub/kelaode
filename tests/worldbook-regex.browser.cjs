@@ -4,6 +4,7 @@ const assert = require('assert/strict');
 (async () => {
  const browser = await chromium.launch({headless:true, executablePath:process.env.WBR_BROWSER_PATH || undefined, args:['--no-sandbox', '--disable-dev-shm-usage']});
  const page = await browser.newPage({ viewport:{width:390,height:844}, deviceScaleFactor:1 });
+ page.setDefaultTimeout(5000);
  const errors=[]; page.on('console',msg=>{if(msg.type()==='error') console.log('BROWSER ERROR',msg.text())}); page.on('pageerror', e=>errors.push(e.message));
  const root=require('path').resolve(__dirname,'..')+'/';
  const prefix='/scripts/extensions/third-party/kelaode/';
@@ -13,7 +14,7 @@ const assert = require('assert/strict');
  '/scripts/world-info.js':`export const worldInfoCache=new Map(); export const world_names=['A','B'];`,
  '/scripts/power-user.js':`export const power_user={};`,
  '/scripts/extensions/regex/engine.js':`export const SCRIPT_TYPES={GLOBAL:'global',SCOPED:'scoped',PRESET:'preset'}; export const getScriptsByType=type=>type==='global'?fixture.settings.regex:[]; export const saveScriptsByType=async scripts=>{fixture.settings.regex=scripts}; export const getCurrentPresetAPI=()=>null; export const getCurrentPresetName=()=>null;`,
- [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null,loadBook:async name=>Object.values((await fixture.context.loadWorldInfo(name)).entries)};`,
+ [prefix+'api.js']:`export const API={getAllBookNames:async()=>Object.keys(window.fixture.books),getGlobalBindings:async()=>window.fixture.active,getCharBindings:async()=>({primary:window.fixture.primary||null,additional:[]}),getChatBinding:async()=>null,getAllBoundBookNames:async()=>fixture.bindings||{},getMetadata:()=>fixture.metadata||{},loadBook:async name=>Object.values((await fixture.context.loadWorldInfo(name)).entries)};`,
  [prefix+'actions.js']:`import {STATE} from './state.js'; export const Actions={flushPendingSave:async()=>{},applyTheme:()=>{},switchView:()=>{},getTokenCount:()=>0,refreshAllContext:async()=>{STATE.allBookNames=Object.keys(fixture.books);STATE.bindings={char:{primary:null,additional:[]},global:fixture.active,chat:null}},loadBook:async name=>{STATE.currentBookName=name;const {UI}=await import('./ui.js');UI.renderBookSelector();UI.renderList();await UI.renderRegexEditor();}};`,
  };
  await page.route('http://wbr.test/**', async route=>{
@@ -129,7 +130,7 @@ const assert = require('assert/strict');
  await random.getByRole('checkbox',{name:'02 新闻'}).check();
  assert.match(await random.locator('[data-status]').textContent(),/已选 2 条.*等概率/);
  await random.getByRole('button',{name:'试抽'}).click();
- assert.match(await random.locator('[data-status]').textContent(),/试抽到「0[12]/);
+ assert.match(await random.locator('[data-status]').textContent(),/试抽到\s*「0[12]/);
  await page.evaluate(()=>fixture.rejectSave=true);
  await random.getByRole('button',{name:'创建随机组'}).click();
  await random.getByText(/HTTP 503/).waitFor();
@@ -202,7 +203,94 @@ const assert = require('assert/strict');
   assert.equal(await page.evaluate(()=>fixture.settings.regex.length),1,'binding must not create duplicate ordinary globals');
   assert.deepEqual(await page.evaluate(()=>fixture.active),['娱乐圈','主世界书'],'binding must not enable the destination');
  }
+ await page.setViewportSize({width:320,height:640});
+ const longName='超长的世界书名字'+ 'WorldbookWithoutSpaces'.repeat(4);
+ await page.evaluate(async ({prefix,longName})=>{
+  document.getElementById('enhanced-wb-panel-v6')?.remove();
+  fixture.books={
+   [longName]:{entries:{0:{uid:0,comment:'示例',content:'测试'}}},
+   '小剧场':{entries:{}}, '当前主书':{entries:{}}, '其他角色主书':{entries:{}},
+  };
+  fixture.active=[longName,'当前主书'];
+  fixture.primary='当前主书';
+  fixture.bindings={'其他角色主书':{primary:['角色']}};
+  fixture.metadata={[longName]:{tags:['日常']},'小剧场':{tags:['剧场']},'当前主书':{tags:['日常']}};
+  fixture.settings.kelaode_worldbook_quick={pins:Object.keys(fixture.books)};
+  fixture.settings.kelaode_worldbook_regex_enabled=false;
+  Object.assign(fixture.context,{chatId:'quick-test',chatMetadata:{},saveMetadataDebounced(){}});
+  const shell=document.createElement('div');
+  shell.id='sheld';
+  shell.style.cssText='position:relative;width:100%;height:540px';
+  shell.innerHTML='<div id="form_sheld" style="height:55px"></div>';
+  document.body.replaceChildren(shell);
+  const theme=document.createElement('style');
+  theme.textContent='input[type=checkbox]{appearance:none!important;background:#fff!important} button{border:3px solid pink!important;background:pink!important;box-shadow:0 2px 4px #000!important} button::after{content:"★"!important}';
+  document.head.append(theme);
+  const {initWorldbookQuick}=await import(prefix+'worldbook-quick.js');
+  initWorldbookQuick();
+ },{prefix,longName});
+ const ball=page.getByRole('button',{name:'世界书悬浮球'});
+ const quick=page.locator('#wb-quick-menu');
+ await ball.click();
+ const toggle=quick.getByRole('switch',{name:longName,exact:true});
+ await toggle.waitFor();
+ assert.equal(await quick.getByRole('switch').count(),2);
+ assert.equal(await toggle.getAttribute('aria-checked'),'true');
+ assert.equal(await toggle.textContent(),'开');
+ const track=toggle.locator('.wb-quick-switch-track');
+ assert.equal(await track.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(36, 100, 72)');
+ assert.equal(await track.evaluate(el=>getComputedStyle(el).flexDirection),'row-reverse');
+ const snapshot=quick.getByRole('button',{name:longName+'的条目快照'});
+ const rects=await Promise.all([quick.boundingBox(),toggle.boundingBox(),snapshot.boundingBox()]);
+ assert.ok(rects[1].x+rects[1].width+9<=rects[2].x);
+ assert.ok(rects[2].x+rects[2].width<=rects[0].x+rects[0].width);
+ assert.ok(await quick.locator('.wb-quick-name').first().evaluate(el=>el.offsetHeight>parseFloat(getComputedStyle(el).lineHeight)));
+ await toggle.click();
+ assert.equal(await toggle.getAttribute('aria-checked'),'false');
+ assert.equal(await toggle.textContent(),'关');
+ assert.equal(await track.evaluate(el=>getComputedStyle(el).flexDirection),'row');
+ await quick.getByRole('combobox',{name:'按标签筛选'}).selectOption('日常');
+ assert.equal(await quick.getByRole('switch').count(),1);
+ assert.equal(await toggle.getAttribute('aria-checked'),'false','filtering must preserve the active chat override');
+ await quick.getByRole('button',{name:'显示主书'}).click();
+ assert.equal(await quick.getByRole('switch',{name:'当前主书'}).getAttribute('aria-checked'),'true');
+ await quick.getByRole('combobox').selectOption('');
+ assert.equal(await quick.getByRole('switch').count(),4);
+ await quick.getByRole('button',{name:'显示主书'}).click();
+ assert.equal(await quick.getByRole('switch').count(),2);
+ await snapshot.click();
+ const snapshots=page.getByRole('dialog');
+ await snapshots.getByText('条目快照',{exact:true}).waitFor();
+ await page.keyboard.press('Escape');
+ await ball.click();
+ await quick.getByRole('button',{name:'悬浮球设置'}).click();
+ const settings=page.getByRole('dialog',{name:'悬浮球设置'});
+ const pin=settings.getByRole('switch',{name:longName,exact:true});
+ await pin.waitFor();
+ assert.equal(await settings.getByRole('switch',{name:'当前主书',exact:true}).count(),0);
+ await settings.getByRole('combobox').selectOption('日常');
+ assert.equal(await settings.locator('[data-pins]').getByRole('switch').count(),1);
+ await settings.getByRole('button',{name:'显示主书'}).click();
+ assert.equal(await settings.getByRole('switch',{name:'当前主书',exact:true}).getAttribute('aria-checked'),'true');
+ assert.equal(await pin.getAttribute('aria-checked'),'true');
+ await pin.click();
+ assert.equal(await pin.getAttribute('aria-checked'),'false');
+ assert.equal(await page.evaluate(name=>fixture.settings.kelaode_worldbook_quick.pins.includes(name),longName),false);
+ await pin.click();
+ await settings.locator('[data-file]').setInputFiles({
+  name:'测试.gif',mimeType:'image/gif',buffer:Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7','base64'),
+ });
+ await settings.locator('[data-image-name]').getByText('测试.gif').waitFor();
+ await settings.locator('[data-close]').click();
+ const picture=await ball.evaluate(el=>{
+  const css=getComputedStyle(el), image=getComputedStyle(el.querySelector('img'));
+  return [css.backgroundColor,css.borderWidth,css.boxShadow,image.borderRadius];
+ });
+ assert.deepEqual(picture,['rgba(0, 0, 0, 0)','0px','none','0px']);
+ await ball.click();
+ assert.equal(await quick.getByRole('button',{name:'显示主书'}).getAttribute('aria-pressed'),'false');
+ assert.equal(await quick.getByRole('switch',{name:'其他角色主书',exact:true}).count(),0);
  assert.deepEqual(errors,[]);
- console.log('PASS mobile: regex management, random group creation/editing, failed save and retry, no page errors');
+ console.log('PASS mobile: regex, random groups, quick switches, long names, tag/primary filters, snapshots and frameless GIF');
  await browser.close();
 })().catch(error=>{console.error(error);process.exit(1)});
