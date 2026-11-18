@@ -273,7 +273,7 @@ export const UI = {
                 if (!book) throw new Error('世界书不存在');
                 openRandomGroups(name, book, this.bindSearchInput.bind(this), () => {
                     toastr.success('随机组已保存');
-                });
+                }, () => getContext().chatMetadata);
             } catch (error) {
                 toastr.error(error.message, '随机组');
             } finally {

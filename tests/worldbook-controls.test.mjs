@@ -12,7 +12,7 @@ const regexModule = new vm.SyntheticModule(['updateBook'], function () {
 }, { context });
 await randomModule.link(specifier => specifier === './worldbook-chat.js' ? chatModule : regexModule);
 await randomModule.evaluate();
-const { applyRandomGroup, applyWorldbookRuntime } = randomModule.namespace;
+const { applyRandomGroup, applyWorldbookRuntime, commitWorldbookDraws } = randomModule.namespace;
 const { applyEntryGroup, captureSnapshotState, getBookControl, readSnapshots, snapshotEntryDisabled, storeSnapshot, writeBookControl } = chatModule.namespace;
 
 function createBook(count = 5) {
@@ -59,6 +59,57 @@ test('the live filter samples without replacement by weight and leaves the origi
     assert.ok(lore.globalLore.every(entry => entry.group === ''));
     assert.ok(Object.values(book.entries).every(entry => entry.group === 'outfits'));
     assert.equal(Object.values(book.entries).length, 5);
+});
+
+test('rotation uses the last candidate before refilling, and records only activated entries', async () => {
+    let book = createBook();
+    const members = new Set([0, 1, 2, 3, 4]);
+    book = applyRandomGroup(book, 'outfits', members, members, 2, 1, { label: '日常', rotation: true }, { label: '', rotation: false });
+    let saves = 0;
+    const chat = { chatId: 'one', chatMetadata: {}, saveMetadataDebounced() { saves++; }, loadWorldInfo: async () => book };
+    const scan = async (context = chat, rolls = []) => {
+        const lore = loreFor('A', book);
+        await applyWorldbookRuntime(lore, context, ['A'], () => rolls.shift() ?? 0);
+        return structuredClone(lore.globalLore);
+    };
+    const ids = entries => entries.map(entry => entry.uid);
+    const first = await scan();
+    assert.deepEqual(ids(first), [0, 1]);
+    assert.deepEqual(ids(await scan()), [0, 1]);
+    assert.equal(saves, 0);
+    commitWorldbookDraws(first, chat);
+    commitWorldbookDraws(first, chat);
+    assert.equal(saves, 1);
+    const second = await scan();
+    assert.deepEqual(ids(second), [2, 3]);
+    commitWorldbookDraws(second, chat);
+    const boundary = await scan(chat, [0, 0.3]);
+    assert.deepEqual(ids(boundary), [1, 4]);
+    commitWorldbookDraws(boundary.filter(entry => entry.uid === 1), chat);
+    assert.deepEqual(ids(await scan(chat, [0, 0.3])), [1, 4], 'an over-budget last entry is still due');
+    commitWorldbookDraws(await scan(chat, [0, 0.3]), chat);
+    assert.deepEqual(ids(await scan()), [0, 2], 'the refill was carried into the new cycle');
+    const otherChat = { ...chat, chatId: 'two', chatMetadata: {} };
+    commitWorldbookDraws(boundary, otherChat);
+    assert.deepEqual(ids(await scan(otherChat)), [0, 1]);
+    assert.deepEqual(ids(await scan()), [0, 2]);
+});
+
+test('a single scan draws one entry from each group and advances each group separately', async () => {
+    let book = createBook(4);
+    book.entries[2].group = book.entries[3].group = 'bonus';
+    for (const [group, ids] of [['outfits', [0, 1]], ['bonus', [2, 3]]]) {
+        const members = new Set(ids);
+        book = applyRandomGroup(book, group, members, members, 1, 1, { label: group, rotation: true }, { label: '', rotation: false });
+    }
+    const chat = { chatId: 'one', chatMetadata: {}, saveMetadataDebounced() {}, loadWorldInfo: async () => book };
+    const lore = loreFor('A', book);
+    await applyWorldbookRuntime(lore, chat, ['A'], () => 0);
+    assert.deepEqual(lore.globalLore.map(entry => entry.uid), [0, 2]);
+    commitWorldbookDraws(structuredClone(lore.globalLore.slice(0, 1)), chat);
+    const next = loreFor('A', book);
+    await applyWorldbookRuntime(next, chat, ['A'], () => 0);
+    assert.deepEqual(next.globalLore.map(entry => entry.uid), [1, 2]);
 });
 
 test('snapshot disable switches apply before a draw and changed entry identities use original settings', async () => {

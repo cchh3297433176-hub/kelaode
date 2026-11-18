@@ -8,7 +8,7 @@ import { Actions } from './actions.js';
 import { UI } from './ui.js';
 import { logger } from './logger.js';
 import { initWorldbookRegex } from './worldbook-regex.js';
-import { applyWorldbookRuntime } from './worldbook-random.js';
+import { applyWorldbookRuntime, commitWorldbookDraws } from './worldbook-random.js';
 import { initWorldbookQuick } from './worldbook-quick.js';
 
 jQuery(async () => {
@@ -45,6 +45,10 @@ jQuery(async () => {
     if (event_types.WORLDINFO_ENTRIES_LOADED) {
         eventSource.on(event_types.WORLDINFO_ENTRIES_LOADED, lore => applyWorldbookRuntime(lore, getContext(), world_names)
             .catch(error => logger.error('Worldbook runtime update failed:', error)));
+    }
+
+    if (event_types.WORLDINFO_ENTRIES_LOADED && event_types.WORLD_INFO_ACTIVATED) {
+        eventSource.on(event_types.WORLD_INFO_ACTIVATED, entries => commitWorldbookDraws(entries, getContext()));
     }
 
     const performInit = async () => {

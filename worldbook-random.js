@@ -1,7 +1,11 @@
 import { updateBook } from './worldbook-regex.js';
-import { effectiveWorldbookNames, getBookControl, readSnapshots, snapshotEntryDisabled } from './worldbook-chat.js';
+import { effectiveWorldbookNames, entryFingerprint, getBookControl, readSnapshots, snapshotEntryDisabled } from './worldbook-chat.js';
 
 const COUNTS_KEY = 'kelaode_worldbook_draw_counts';
+const OPTIONS_KEY = 'kelaode_worldbook_random_options';
+const PROGRESS_KEY = 'kelaode_worldbook_random_progress';
+const DRAW_KEY = 'kelaodeWorldbookRotationDraw';
+const committedDraws = new WeakSet();
 
 export const diceIcon = `<svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" width="17" height="17">
     <rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.7"/>
@@ -47,6 +51,25 @@ function drawCount(book, group) {
     return Number.isSafeInteger(value) && value > 1 ? value : 1;
 }
 
+function groupOptions(book, group) {
+    const options = book?.extensions?.[OPTIONS_KEY];
+    const value = Object.hasOwn(options ?? {}, group) ? options[group] : undefined;
+    return { label: value?.label ?? '', rotation: value?.rotation === true };
+}
+
+function progressKey(book, group) {
+    return JSON.stringify([book, group]);
+}
+
+function progressFor(metadata, key) {
+    const progress = metadata?.[PROGRESS_KEY]?.[key];
+    return new Set(Array.isArray(progress) ? progress : []);
+}
+
+function entryKey(entry) {
+    return `${entry.uid}:${entryFingerprint(entry)}`;
+}
+
 function drawWeighted(entries, count, weight = entryWeight, random = Math.random) {
     const pool = entries.map(entry => ({ entry, weight: weight(entry) }));
     const drawn = [];
@@ -58,11 +81,48 @@ function drawWeighted(entries, count, weight = entryWeight, random = Math.random
     return drawn;
 }
 
+function drawRotating(candidates, count, used, weight, random) {
+    const remaining = candidates.filter(entry => !used.has(entryKey(entry)));
+    const tail = drawWeighted(remaining, count, weight, random);
+    if (tail.length === count) return tail;
+    const alreadySelected = new Set(tail);
+    const next = candidates.filter(entry => !alreadySelected.has(entry));
+    return [...tail, ...drawWeighted(next, count - tail.length, weight, random)];
+}
+
+// The activation event excludes dry runs and entries dropped by the lore budget.
+export function commitWorldbookDraws(entries, context) {
+    const { chatId, chatMetadata: metadata } = context;
+    if (!chatId || !metadata || !Array.isArray(entries)) return;
+    const activated = new Map();
+    for (const entry of entries) {
+        const draw = entry[DRAW_KEY];
+        if (!draw || draw.chatId !== chatId || committedDraws.has(draw)) continue;
+        if (!activated.has(draw)) activated.set(draw, new Set());
+        // SillyTavern can rewrite content or keys after the candidate is selected.
+        activated.get(draw).add(String(entry.uid));
+    }
+    if (!activated.size) return;
+    const progress = { ...metadata[PROGRESS_KEY] };
+    for (const [draw, accepted] of activated) {
+        const used = progressFor(metadata, draw.key);
+        for (const [uid, key] of draw.winners) {
+            if (!accepted.has(uid)) continue;
+            if (draw.candidates.every(candidate => used.has(candidate))) used.clear();
+            used.add(key);
+        }
+        progress[draw.key] = [...used].filter(key => draw.members.includes(key));
+        committedDraws.add(draw);
+    }
+    metadata[PROGRESS_KEY] = progress;
+    context.saveMetadataDebounced();
+}
+
 // SillyTavern 1.18 passes request-local entries before it scans for activations.
 export async function applyWorldbookRuntime(lore, context, available, random = Math.random) {
     const buckets = [lore.globalLore, lore.characterLore, lore.chatLore, lore.personaLore].filter(Array.isArray);
     const bound = new Set(buckets.flatMap(bucket => bucket.map(entry => entry.world)));
-    const metadata = context.chatMetadata;
+    const { chatId, chatMetadata: metadata } = context;
     const effective = new Set(effectiveWorldbookNames(bound, metadata, available));
     const toLoad = new Set([...effective].filter(name => {
         const control = getBookControl(metadata, name);
@@ -116,11 +176,26 @@ export async function applyWorldbookRuntime(lore, context, available, random = M
     const decisions = new Map();
     for (const [name, entries] of byBook) {
         for (const [group, members] of groupsIn(entries)) {
-            const count = drawCount(books.get(name), group);
-            if (count === 1 || !isSimpleGroup(members)) continue;
-            const candidates = members.filter(entry => !entry.disable);
-            const winners = new Set(drawWeighted(candidates, count, entryWeight, random));
-            for (const entry of candidates) decisions.set(entry, winners.has(entry));
+            const book = books.get(name);
+            const count = drawCount(book, group);
+            const { label, rotation } = groupOptions(book, group);
+            if ((count === 1 && !rotation && !label) || !isSimpleGroup(members)) continue;
+            const enabled = members.filter(entry => !entry.disable);
+            const candidates = [...new Map(enabled.map(entry => [entry.uid, entry])).values()];
+            const key = progressKey(name, group);
+            const winners = rotation
+                ? drawRotating(candidates, count, progressFor(metadata, key), entryWeight, random)
+                : drawWeighted(candidates, count, entryWeight, random);
+            const winnerIds = new Set(winners.map(entry => entry.uid));
+            // A shared, cloneable record follows the winners through SillyTavern's scan.
+            const draw = rotation && chatId ? {
+                chatId, key, candidates: candidates.map(entryKey),
+                members: [...new Set(members.map(entryKey))],
+                winners: winners.map(entry => [String(entry.uid), entryKey(entry)]),
+            } : null;
+            for (const entry of enabled) {
+                decisions.set(entry, winnerIds.has(entry.uid) ? draw : false);
+            }
         }
     }
 
@@ -128,7 +203,10 @@ export async function applyWorldbookRuntime(lore, context, available, random = M
         bucket.length = 0;
         for (const entry of prepared[index]) {
             if (decisions.get(entry) === false) continue;
-            bucket.push(decisions.has(entry) ? { ...entry, group: '' } : entry);
+            const draw = decisions.get(entry);
+            bucket.push(decisions.has(entry)
+                ? { ...entry, group: '', ...(draw ? { [DRAW_KEY]: draw } : {}) }
+                : entry);
         }
     }
 }
@@ -139,12 +217,15 @@ function makeGroupName(bookName) {
     return `${bookName.replace(/,/g, '，').trim().slice(0, 48)}-${suffix}`;
 }
 
-export function applyRandomGroup(book, group, selected, previousMembers, count = 1, previousCount = 1) {
+export function applyRandomGroup(book, group, selected, previousMembers, count = 1, previousCount = 1,
+    options = groupOptions(book, group), previousOptions = options) {
     const entries = Object.values(book.entries ?? {});
     const members = groupsIn(entries).get(group) ?? [];
     const memberIds = new Set(members.map(entry => entry.uid));
+    const currentOptions = groupOptions(book, group);
     if (memberIds.size !== previousMembers.size || [...memberIds].some(uid => !previousMembers.has(uid))
-        || !isSimpleGroup(members) || drawCount(book, group) !== previousCount) {
+        || !isSimpleGroup(members) || drawCount(book, group) !== previousCount
+        || currentOptions.label !== previousOptions.label || currentOptions.rotation !== previousOptions.rotation) {
         throw new Error('包含组已变化，请重新打开随机组');
     }
     const byId = new Map(entries.map(entry => [entry.uid, entry]));
@@ -164,9 +245,16 @@ export function applyRandomGroup(book, group, selected, previousMembers, count =
     else delete counts[group];
     if (Object.keys(counts).length) extensions[COUNTS_KEY] = counts;
     else delete extensions[COUNTS_KEY];
+    const allOptions = { ...extensions[OPTIONS_KEY] };
+    const label = String(options.label ?? '').trim().slice(0, 48);
+    delete allOptions[group];
+    if (selected.size && (label || options.rotation)) {
+        extensions[OPTIONS_KEY] = { ...allOptions, [group]: { label, rotation: Boolean(options.rotation) } };
+    } else if (Object.keys(allOptions).length) extensions[OPTIONS_KEY] = allOptions;
+    else delete extensions[OPTIONS_KEY];
     return {
         ...book,
-        ...(book.extensions || count > 1 ? { extensions } : {}),
+        ...(book.extensions || Object.keys(extensions).length ? { extensions } : {}),
         entries: Object.fromEntries(Object.entries(book.entries ?? {}).map(([key, entry]) => {
             if (memberIds.has(entry.uid)) {
                 return [key, selected.has(entry.uid) ? entry : { ...entry, group: '', disable: true }];
@@ -184,7 +272,7 @@ function entryTitle(entry) {
     return entry.comment || `条目 #${entry.uid}`;
 }
 
-export function openRandomGroups(bookName, book, bindSearch, onSaved) {
+export function openRandomGroups(bookName, book, bindSearch, onSaved, getMetadata) {
     const entries = Object.values(book.entries ?? {}).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const groups = groupsIn(entries);
     const dialog = document.createElement('dialog');
@@ -196,12 +284,16 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
             <button type="button" class="menu_button" data-close>关闭</button>
         </div>
         <select data-groups aria-label="包含组"><option value="">新建随机组</option></select>
+        <input type="text" data-label maxlength="48" placeholder="组名（选填）" aria-label="组名">
         <div class="wb-random-count">
             <label for="wb-random-draw-count">每轮抽取</label>
             <button type="button" class="menu_button" data-minus aria-label="少抽一条">−</button>
             <input type="number" id="wb-random-draw-count" data-count min="1" max="1" value="1" inputmode="numeric">
             <button type="button" class="menu_button" data-plus aria-label="多抽一条">+</button>
         </div>
+        <label class="wbr-check wb-random-rotation">
+            <input type="checkbox" data-rotation>轮完再抽
+        </label>
         <input type="search" data-search placeholder="搜索条目" aria-label="搜索条目">
         <div class="wbr-picker-list wb-random-list" data-list></div>
         <footer class="wb-random-footer">
@@ -222,39 +314,54 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
     const countInput = find('count');
     const minus = find('minus');
     const plus = find('plus');
+    const labelInput = find('label');
+    const rotationInput = find('rotation');
     let initial = new Set();
     let selected = new Set();
     let initialCount = 1;
+    let initialOptions = groupOptions(book, '');
     let saving = false;
 
     for (const [name, members] of groups) {
-        const option = new Option(`${name} · ${members.length} 条`, name);
+        const option = new Option(`${groupOptions(book, name).label || name} · ${members.length} 条`, name);
         option.disabled = !isSimpleGroup(members);
         if (option.disabled) option.textContent += '（有高级触发设置）';
         select.add(option);
     }
 
-    const candidates = () => entries.filter(entry => selected.has(entry.uid) && !entry.disable);
+    const metadata = getMetadata?.();
+    const { snapshot, groupStates } = getBookControl(metadata, bookName);
+    const activeSnapshot = readSnapshots(book).find(item => item.id === snapshot);
+    const disabled = entry => snapshotEntryDisabled(activeSnapshot, entry, groupStates);
+    const candidates = () => entries.filter(entry => selected.has(entry.uid) && !disabled(entry));
     const weight = entry => initial.has(entry.uid) ? entryWeight(entry) : 100;
     const maxCount = () => Math.max(1, selected.size);
     const requestedCount = () => countInput.valueAsNumber;
+    const options = () => ({ label: labelInput.value.trim(), rotation: rotationInput.checked });
+    const previewProgress = () => progressFor(getMetadata?.(), progressKey(bookName, select.value));
     function updateStatus(result = '') {
         const enabled = candidates();
         const removed = [...initial].filter(uid => !selected.has(uid)).length;
         const count = requestedCount();
         const valid = Number.isSafeInteger(count) && count >= 1 && count <= maxCount();
-        const changed = removed > 0 || selected.size !== initial.size || count !== initialCount;
+        const { label, rotation } = options();
+        const changed = removed > 0 || selected.size !== initial.size || count !== initialCount
+            || label !== initialOptions.label || rotation !== initialOptions.rotation;
         const pieces = [`已选 ${selected.size} 条`];
         if (!valid) pieces.push(`抽取条数可设为 1–${maxCount()}`);
         else if (enabled.length) pieces.push(`${enabled.length} 条参与，每轮抽 ${Math.min(count, enabled.length)} 条`);
         else pieces.push('暂无参与条目');
+        if (rotation && enabled.length) {
+            const used = previewProgress();
+            pieces.push(`本轮已抽 ${enabled.filter(entry => used.has(entryKey(entry))).length} / ${enabled.length}`);
+        }
         if (enabled.length > 1 && new Set(enabled.map(weight)).size === 1) pieces.push('等概率');
         if (selected.size > initial.size - removed) pieces.push('新成员将设为蓝灯');
         if (removed) pieces.push(`移出并停用 ${removed} 条`);
         if (result) pieces.push(result);
         status.textContent = pieces.join(' · ');
         countInput.max = String(maxCount());
-        countInput.disabled = saving;
+        countInput.disabled = labelInput.disabled = rotationInput.disabled = saving;
         minus.disabled = saving || count <= 1;
         plus.disabled = saving || count >= maxCount();
         draw.disabled = saving || !valid || !enabled.length;
@@ -285,7 +392,7 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
             };
             const text = document.createElement('span');
             text.textContent = title;
-            const detail = note || (entry.disable ? '已停用' : '');
+            const detail = note || (disabled(entry) ? '已停用' : '');
             if (detail) {
                 const caption = document.createElement('small');
                 caption.textContent = detail;
@@ -301,12 +408,16 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
         initial = new Set((groups.get(select.value) ?? []).map(entry => entry.uid));
         selected = new Set(initial);
         initialCount = drawCount(book, select.value);
+        initialOptions = groupOptions(book, select.value);
         countInput.value = String(Math.min(initialCount, maxCount()));
+        labelInput.value = initialOptions.label;
+        rotationInput.checked = initialOptions.rotation;
         renderList(search.value);
         updateStatus();
     };
     bindSearch(search, query => renderList(query));
     countInput.oninput = () => updateStatus();
+    labelInput.oninput = rotationInput.onchange = () => updateStatus();
     function stepCount(step) {
         const count = requestedCount() || 1;
         countInput.value = String(Math.min(maxCount(), Math.max(1, count + step)));
@@ -315,7 +426,9 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
     minus.onclick = () => stepCount(-1);
     plus.onclick = () => stepCount(1);
     draw.onclick = () => {
-        const winners = drawWeighted(candidates(), requestedCount(), weight);
+        const winners = rotationInput.checked
+            ? drawRotating(candidates(), requestedCount(), previewProgress(), weight)
+            : drawWeighted(candidates(), requestedCount(), weight);
         if (winners.length) updateStatus(`试抽到 ${winners.map(entry => `「${entryTitle(entry)}」`).join('、')}`);
     };
     save.onclick = async () => {
@@ -325,7 +438,9 @@ export function openRandomGroups(bookName, book, bindSearch, onSaved) {
         updateStatus();
         try {
             const group = select.value || makeGroupName(bookName);
-            await updateBook(bookName, book => applyRandomGroup(book, group, selected, initial, requestedCount(), initialCount));
+            await updateBook(bookName, book => applyRandomGroup(
+                book, group, selected, initial, requestedCount(), initialCount, options(), initialOptions,
+            ));
         } catch (error) {
             saving = false;
             close.disabled = select.disabled = search.disabled = list.inert = false;

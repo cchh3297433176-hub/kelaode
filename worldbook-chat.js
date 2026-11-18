@@ -40,7 +40,7 @@ export function readSnapshots(book) {
         && typeof snapshot.id === 'string' && snapshot.states && typeof snapshot.states === 'object');
 }
 
-function entryFingerprint(entry) {
+export function entryFingerprint(entry) {
     // An entry UID can be reused after a deletion. Match its title/keys as well.
     const identity = JSON.stringify([
         entry.comment ?? '', entry.key ?? [], entry.keysecondary ?? [], entry.comment ? '' : entry.content ?? '',

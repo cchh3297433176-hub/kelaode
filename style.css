@@ -3869,6 +3869,10 @@ body[data-theme="dark"] .wb-random-dialog {
     color: inherit;
     font: inherit;
 }
+.wb-random-rotation {
+    flex: none; min-height: 38px; padding: 3px 10px;
+    border: 1px solid var(--wb-random-line); border-radius: 8px; background: var(--wb-random-fill);
+}
 .wb-random-list { flex: 1; }
 .wb-random-list .wb-random-row {
     padding: 8px;
