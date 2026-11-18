@@ -64,7 +64,10 @@ export async function applyWorldbookRuntime(lore, context, available, random = M
     const bound = new Set(buckets.flatMap(bucket => bucket.map(entry => entry.world)));
     const metadata = context.chatMetadata;
     const effective = new Set(effectiveWorldbookNames(bound, metadata, available));
-    const toLoad = new Set([...effective].filter(name => !bound.has(name) || getBookControl(metadata, name).snapshot));
+    const toLoad = new Set([...effective].filter(name => {
+        const control = getBookControl(metadata, name);
+        return !bound.has(name) || control.snapshot || Object.keys(control.groupStates ?? {}).length;
+    }));
     for (const bucket of buckets) {
         for (const entry of bucket) if (entry.group && effective.has(entry.world)) toLoad.add(entry.world);
     }
@@ -88,15 +91,20 @@ export async function applyWorldbookRuntime(lore, context, available, random = M
     const byBook = new Map();
     const snapshots = new Map();
     for (const [name, book] of books) {
-        const id = getBookControl(metadata, name).snapshot;
-        if (id) snapshots.set(name, readSnapshots(book).find(snapshot => snapshot.id === id));
+        const { snapshot, groupStates } = getBookControl(metadata, name);
+        if (snapshot || groupStates) {
+            snapshots.set(name, {
+                snapshot: readSnapshots(book).find(item => item.id === snapshot),
+                groupStates,
+            });
+        }
     }
     for (const bucket of prepared) {
         for (let i = 0; i < bucket.length; i++) {
             const entry = bucket[i];
-            const snapshot = snapshots.get(entry.world);
-            if (snapshot) {
-                const disable = snapshotEntryDisabled(snapshot, entry);
+            const controls = snapshots.get(entry.world);
+            if (controls) {
+                const disable = snapshotEntryDisabled(controls.snapshot, entry, controls.groupStates);
                 if (disable !== Boolean(entry.disable)) bucket[i] = { ...entry, disable };
             }
             if (!entry.group) continue;

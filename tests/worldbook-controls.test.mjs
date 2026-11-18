@@ -13,7 +13,7 @@ const regexModule = new vm.SyntheticModule(['updateBook'], function () {
 await randomModule.link(specifier => specifier === './worldbook-chat.js' ? chatModule : regexModule);
 await randomModule.evaluate();
 const { applyRandomGroup, applyWorldbookRuntime } = randomModule.namespace;
-const { captureSnapshotState, getBookControl, readSnapshots, snapshotEntryDisabled, storeSnapshot, writeBookControl } = chatModule.namespace;
+const { applyEntryGroup, captureSnapshotState, getBookControl, readSnapshots, snapshotEntryDisabled, storeSnapshot, writeBookControl } = chatModule.namespace;
 
 function createBook(count = 5) {
     return {
@@ -107,4 +107,27 @@ test('advanced or concurrently edited groups keep native behavior and reject sta
     assert.equal(lore.globalLore.length, 5);
     assert.ok(lore.globalLore.every(entry => entry.group === 'outfits'));
     assert.throws(() => setDrawCount(setDrawCount(createBook(), 2), 3, 1), /包含组已变化/);
+});
+
+test('partial groups compose in the current chat without replacing unrelated switches', async () => {
+    let book = createBook(4);
+    const states = disabled => new Map(Object.values(book.entries).map(entry => [
+        entry.uid, captureSnapshotState(entry, disabled.includes(entry.uid)),
+    ]));
+    book = storeSnapshot(book, '基础', states([3]));
+    book = storeSnapshot(book, '末日', states([0, 1]), new Set([0, 1]));
+    book = storeSnapshot(book, '星际', states([2]), new Set([1, 2]));
+    const [base, first, second] = readSnapshots(book);
+    const chat = { chatId: 'one', chatMetadata: {}, saveMetadataDebounced() {}, loadWorldInfo: async () => book };
+    assert.deepEqual(Object.keys(first.states), ['0', '1']);
+    writeBookControl(chat, 'one', 'A', { snapshot: base.id });
+    applyEntryGroup(chat, 'one', 'A', book, first);
+    applyEntryGroup(chat, 'one', 'A', book, second);
+    const lore = loreFor('A', book);
+    await applyWorldbookRuntime(lore, chat, ['A']);
+    assert.deepEqual(lore.globalLore.map(entry => entry.disable), [true, false, true, true]);
+    assert.ok(Object.values(book.entries).every(entry => !entry.disable));
+    writeBookControl(chat, 'one', 'A', { snapshot: undefined, groupStates: undefined });
+    assert.equal(Object.keys(getBookControl(chat.chatMetadata, 'A')).length, 0);
+    assert.throws(() => storeSnapshot(book, '空组', states([]), new Set()), /请选择/);
 });

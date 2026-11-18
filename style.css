@@ -4064,3 +4064,7 @@ button.wb-quick-ball > * { pointer-events: none; }
 }
 .wb-snapshot-controls { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .wb-snapshot-controls input { flex: 1; }
+
+.wb-snapshot-entry { justify-content: space-between; gap: 12px; }
+.wb-snapshot-entry > label:first-child { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.wb-snapshot-entry > label + label { flex-shrink: 0; }

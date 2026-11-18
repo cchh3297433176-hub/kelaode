@@ -1,5 +1,5 @@
 import { getContext } from '../../../extensions.js';
-import { captureSnapshotState, getBookControl, readSnapshots, snapshotEntryDisabled, storeSnapshot, writeBookControl } from './worldbook-chat.js';
+import { applyEntryGroup, captureSnapshotState, getBookControl, readSnapshots, snapshotEntryDisabled, storeSnapshot, writeBookControl } from './worldbook-chat.js';
 import { updateBook } from './worldbook-regex.js';
 
 export async function openWorldbookSnapshots(bookName) {
@@ -20,6 +20,7 @@ export async function openWorldbookSnapshots(bookName) {
             <button type="button" class="menu_button" data-close>关闭</button>
         </div>
         <div class="wb-snapshot-picks" role="group" aria-label="条目快照" data-snapshots></div>
+        <label class="wbr-check"><input type="checkbox" data-group> 存为条目分组</label>
         <input type="search" data-search placeholder="搜索条目" aria-label="搜索条目">
         <div class="wbr-picker-list wb-feature-list" data-entries></div>
         <p class="wb-feature-status" data-status aria-live="polite"></p>
@@ -36,6 +37,8 @@ export async function openWorldbookSnapshots(bookName) {
     const close = find('close');
     const nameInput = find('name');
     const draft = new Map();
+    const groupMode = find('group');
+    const members = new Set();
     let busy = false;
     let selectedId = '';
 
@@ -45,8 +48,10 @@ export async function openWorldbookSnapshots(bookName) {
     }
     function resetDraft(snapshot) {
         draft.clear();
+        members.clear();
+        const { groupStates } = getBookControl(getContext().chatMetadata, bookName);
         for (const entry of Object.values(book.entries ?? {})) {
-            draft.set(entry.uid, captureSnapshotState(entry, snapshotEntryDisabled(snapshot, entry)));
+            draft.set(entry.uid, captureSnapshotState(entry, snapshotEntryDisabled(snapshot, entry, groupStates)));
         }
     }
     function renderPicker() {
@@ -57,17 +62,22 @@ export async function openWorldbookSnapshots(bookName) {
             button.type = 'button';
             button.className = 'menu_button';
             button.dataset.snapshotId = id;
-            button.textContent = snapshot?.name ?? '原书条目设置';
+            button.textContent = snapshot?.kind === 'group' ? snapshot.name + ' · 分组' : snapshot?.name ?? '原书条目设置';
             button.setAttribute('aria-pressed', String(id === selectedId));
             button.onclick = () => {
                 if (busy) return;
                 try {
-                    if (chatId) writeBookControl(getContext(), chatId, bookName, { snapshot: id || undefined });
-                    selectedId = id;
-                    for (const option of picker.children) option.setAttribute('aria-pressed', String(option.dataset.snapshotId === id));
-                    resetDraft(snapshot);
+                    if (snapshot?.kind === 'group') {
+                        applyEntryGroup(getContext(), chatId, bookName, book, snapshot);
+                    } else {
+                        if (chatId) writeBookControl(getContext(), chatId, bookName, { snapshot: id || undefined, groupStates: undefined });
+                        selectedId = id;
+                    }
+                    for (const option of picker.children) option.setAttribute('aria-pressed', String(option.dataset.snapshotId === selectedId));
+                    resetDraft(readSnapshots(book).find(item => item.id === selectedId));
                     renderEntries();
                     renderStatus();
+                    if (snapshot?.kind === 'group') status.textContent = '已应用分组「' + snapshot.name + '」到当前聊天';
                 } catch (error) {
                     status.textContent = error.message;
                 }
@@ -81,44 +91,66 @@ export async function openWorldbookSnapshots(bookName) {
         for (const entry of Object.values(book.entries ?? {}).sort((a, b) => (a.order ?? 0) - (b.order ?? 0))) {
             const title = entry.comment || `条目 #${entry.uid}`;
             if (term && !title.toLocaleLowerCase().includes(term)) continue;
-            const row = document.createElement('label');
-            row.className = 'wbr-check wb-feature-row';
+            const row = document.createElement('div');
+            row.className = 'wbr-check wb-feature-row wb-snapshot-entry';
+            const toggle = document.createElement('label');
+            toggle.className = 'wbr-check';
             const input = document.createElement('input');
             input.type = 'checkbox';
             input.checked = !draft.get(entry.uid)?.disabled;
             input.onchange = () => {
                 draft.set(entry.uid, captureSnapshotState(entry, !input.checked));
-                status.textContent = '已调整草稿，可存为新快照';
+                status.textContent = '已调整草稿';
             };
-            row.append(input, document.createTextNode(title));
+            toggle.append(input, document.createTextNode(title));
+            row.append(toggle);
+            if (groupMode.checked) {
+                const include = document.createElement('label');
+                include.className = 'wbr-check';
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = members.has(entry.uid);
+                checkbox.setAttribute('aria-label', '将「' + title + '」加入分组');
+                checkbox.onchange = () => checkbox.checked ? members.add(entry.uid) : members.delete(entry.uid);
+                include.append(checkbox, document.createTextNode('纳入'));
+                row.append(include);
+            }
             entryList.append(row);
         }
         if (!entryList.childElementCount) entryList.textContent = '没有匹配的条目';
     }
     function renderStatus() {
         const current = readSnapshots(book).find(snapshot => snapshot.id === getAppliedId());
-        status.textContent = !chatId ? '打开聊天后可应用快照' : current ? `当前聊天 · ${current.name}` : '当前聊天 · 原书条目设置';
+        const hasGroup = Object.keys(getBookControl(getContext().chatMetadata, bookName).groupStates ?? {}).length;
+        status.textContent = hasGroup ? '当前聊天 · 已应用条目分组' : !chatId ? '打开聊天后可应用快照' : current ? `当前聊天 · ${current.name}` : '当前聊天 · 原书条目设置';
     }
 
     search.oninput = () => renderEntries();
+    groupMode.onchange = () => {
+        save.textContent = groupMode.checked ? '存为分组' : '存为快照';
+        nameInput.placeholder = groupMode.checked ? '分组名称' : '快照名称';
+        nameInput.setAttribute('aria-label', nameInput.placeholder);
+        renderEntries();
+    };
     save.onclick = async () => {
         if (busy) return;
         const name = nameInput.value.trim();
         if (!name) {
-            status.textContent = '请输入快照名称';
+            status.textContent = '请输入' + (groupMode.checked ? '分组' : '快照') + '名称';
             nameInput.focus();
             return;
         }
+        const selection = groupMode.checked ? new Set(members) : undefined;
         busy = true;
-        save.disabled = close.disabled = search.disabled = nameInput.disabled = picker.inert = entryList.inert = true;
+        save.disabled = close.disabled = groupMode.disabled = search.disabled = nameInput.disabled = picker.inert = entryList.inert = true;
         try {
             const states = new Map(draft);
             await updateBook(bookName, current => {
-                book = storeSnapshot(current, name, states);
+                book = storeSnapshot(current, name, states, selection);
                 return book;
             });
             renderPicker();
-            resetDraft(readSnapshots(book).find(snapshot => snapshot.name === name));
+            if (!selection) resetDraft(readSnapshots(book).find(snapshot => snapshot.name === name));
             renderEntries();
             nameInput.value = '';
             status.textContent = `已保存「${name}」`;
@@ -126,7 +158,7 @@ export async function openWorldbookSnapshots(bookName) {
             status.textContent = error.message;
         } finally {
             busy = false;
-            save.disabled = close.disabled = search.disabled = nameInput.disabled = picker.inert = entryList.inert = false;
+            save.disabled = close.disabled = groupMode.disabled = search.disabled = nameInput.disabled = picker.inert = entryList.inert = false;
         }
     };
     nameInput.onkeydown = event => {

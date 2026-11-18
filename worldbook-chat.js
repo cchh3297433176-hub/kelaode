@@ -27,7 +27,7 @@ export function writeBookControl(context, chatId, name, patch) {
     const current = getBookControl(metadata, name);
     const control = { ...current, ...patch, name };
     const remaining = chatControls(metadata).filter(item => item.name !== name);
-    if (typeof control.enabled === 'boolean' || control.snapshot) remaining.push(control);
+    if (typeof control.enabled === 'boolean' || control.snapshot || Object.keys(control.groupStates ?? {}).length) remaining.push(control);
     if (remaining.length) metadata[CHAT_KEY] = remaining;
     else delete metadata[CHAT_KEY];
     context.saveMetadataDebounced();
@@ -50,14 +50,16 @@ function entryFingerprint(entry) {
     return hash >>> 0;
 }
 
-export function snapshotEntryDisabled(snapshot, entry) {
+export function snapshotEntryDisabled(snapshot, entry, groupStates) {
+    const group = Object.hasOwn(groupStates ?? {}, entry.uid) ? groupStates[entry.uid] : null;
+    if (group?.fingerprint === entryFingerprint(entry) && typeof group.disabled === 'boolean') return group.disabled;
     const state = Object.hasOwn(snapshot?.states ?? {}, entry.uid) ? snapshot.states[entry.uid] : null;
     return state?.fingerprint === entryFingerprint(entry) && typeof state.disabled === 'boolean'
         ? state.disabled
         : Boolean(entry.disable);
 }
 
-export function storeSnapshot(book, name, states) {
+export function storeSnapshot(book, name, states, members) {
     const existing = readSnapshots(book);
     if (existing.some(snapshot => snapshot.name === name)) throw new Error('已有同名快照，请换个名字');
     const id = Array.from(crypto.getRandomValues(new Uint32Array(2))).join('-');
@@ -65,15 +67,29 @@ export function storeSnapshot(book, name, states) {
     const saved = {
         id,
         name,
-        states: Object.fromEntries(entries.map(entry => {
+        ...(members ? { kind: 'group' } : {}),
+        states: Object.fromEntries(entries.filter(entry => !members || (
+            members.has(entry.uid) && states.get(entry.uid)?.fingerprint === entryFingerprint(entry)
+        )).map(entry => {
             const draft = states.get(entry.uid);
             const fingerprint = entryFingerprint(entry);
             return [entry.uid, { fingerprint, disabled: draft?.fingerprint === fingerprint ? draft.disabled : Boolean(entry.disable) }];
         })),
     };
+    if (members && !Object.keys(saved.states).length) throw new Error('请选择仍存在的分组条目');
     return { ...book, extensions: { ...book.extensions, [SNAPSHOT_KEY]: [...existing, saved] } };
 }
 
 export function captureSnapshotState(entry, disabled) {
     return { fingerprint: entryFingerprint(entry), disabled };
+}
+
+export function applyEntryGroup(context, chatId, name, book, group) {
+    const control = getBookControl(context.chatMetadata, name);
+    const changes = Object.values(book.entries ?? {}).flatMap(entry => {
+        const state = Object.hasOwn(group.states, entry.uid) ? group.states[entry.uid] : null;
+        return state?.fingerprint === entryFingerprint(entry) ? [[entry.uid, state]] : [];
+    });
+    if (!changes.length) throw new Error('分组里的条目已找不到，请重新保存');
+    writeBookControl(context, chatId, name, { groupStates: { ...control.groupStates, ...Object.fromEntries(changes) } });
 }
